@@ -29,9 +29,10 @@
 <div id="app">
 
   <header id="topbar">
-    <button id="navBack" class="icon-btn" hidden aria-label="返回">‹</button>
+    <!-- 圖標由 src/ui/icons.js 注入，避免同一個符號在 HTML 與 JS 各寫一份 -->
+    <button id="navBack" class="icon-btn" hidden aria-label="返回"></button>
     <h1 id="topTitle">書籍翻譯器</h1>
-    <button id="navSettings" class="icon-btn" aria-label="設定">⚙</button>
+    <button id="navSettings" class="icon-btn" aria-label="設定"></button>
   </header>
 
   <main id="view" aria-live="polite"></main>
@@ -74,7 +75,7 @@
       <div class="input-wrap">
         <input id="kGoogle" type="password" autocomplete="off" autocapitalize="off"
                spellcheck="false" placeholder="AIza…">
-        <button class="reveal" data-reveal="kGoogle" aria-label="顯示">👁</button>
+        <button class="reveal" data-reveal="kGoogle" aria-label="顯示金鑰"></button>
       </div>
       <p class="hint">
         用於 OCR 與版面座標偵測。請到 Google Cloud Console 為這把金鑰加上
@@ -88,7 +89,7 @@
       <div class="input-wrap">
         <input id="kClaude" type="password" autocomplete="off" autocapitalize="off"
                spellcheck="false" placeholder="sk-ant-…">
-        <button class="reveal" data-reveal="kClaude" aria-label="顯示">👁</button>
+        <button class="reveal" data-reveal="kClaude" aria-label="顯示金鑰"></button>
       </div>
       <p class="hint">用於翻譯與版面語意判讀。</p>
       <p class="hint" id="cStat"></p>

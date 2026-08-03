@@ -1,6 +1,8 @@
 /* 極簡 hash 路由。用 hash 是因為 GitHub Pages 沒有 SPA rewrite，
    history API 一重新整理就 404。 */
 
+import { icon } from './icons.js';
+
 const routes = new Map();
 let current = null;
 
@@ -43,8 +45,14 @@ async function render() {
 
 export function start() {
   addEventListener('hashchange', render);
-  document.getElementById('navBack').addEventListener('click', back);
-  document.getElementById('navSettings').addEventListener('click', () => go('settings'));
+
+  const backBtn = document.getElementById('navBack');
+  const settingsBtn = document.getElementById('navSettings');
+  backBtn.append(icon('back', { size: 24 }));
+  settingsBtn.append(icon('settings', { size: 21 }));
+
+  backBtn.addEventListener('click', back);
+  settingsBtn.addEventListener('click', () => go('settings'));
 
   // 任何地方寫 data-go="xxx" 就能導頁，不用各自綁事件
   document.addEventListener('click', (e) => {

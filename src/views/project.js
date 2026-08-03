@@ -1,6 +1,7 @@
 import { setTitle, go } from '../ui/router.js';
 import { askText, askConfirm } from '../ui/dialog.js';
-import { toast, ok, bad, pending } from '../ui/toast.js';
+import { icon } from '../ui/icons.js';
+import { toast, bad, pending } from '../ui/toast.js';
 import * as db from '../state/db.js';
 import { settings } from '../state/settings.js';
 import { addImagePage, listPages } from '../input/pages.js';
@@ -54,10 +55,10 @@ export default async function projectView(root, { id }) {
   const epubIn = fileInput('application/epub+zip,.epub', false);
 
   bar.append(
-    action('📷 拍書頁', () => camera.click()),
-    action('🖼 從相簿', () => album.click()),
-    action('📄 PDF',   () => pdfIn.click()),
-    action('📕 EPUB',  () => epubIn.click()),
+    action('拍書頁', () => camera.click(), 'camera'),
+    action('從相簿', () => album.click(), 'image'),
+    action('PDF',   () => pdfIn.click(), 'file'),
+    action('EPUB',  () => epubIn.click(), 'book'),
     camera, album, pdfIn, epubIn,
   );
 
@@ -72,8 +73,8 @@ export default async function projectView(root, { id }) {
 
   const runBar = document.createElement('div');
   runBar.className = 'row-gap';
-  const ocrBtn = action('🔍 辨識文字', runOcr);
-  const trBtn = action('🌏 翻譯', runTranslate);
+  const ocrBtn = action('辨識文字', runOcr, 'scan');
+  const trBtn = action('翻譯', runTranslate, 'translate');
   trBtn.classList.add('btn-primary');
   runBar.append(ocrBtn, trBtn);
 
@@ -95,10 +96,13 @@ export default async function projectView(root, { id }) {
 
   /* ---------- 內部 ---------- */
 
-  function action(label, onClick) {
+  function action(label, onClick, iconName) {
     const b = document.createElement('button');
     b.className = 'btn';
-    b.textContent = label;
+    if (iconName) b.append(icon(iconName, { size: 18 }));
+    const span = document.createElement('span');
+    span.textContent = label;
+    b.append(span);
     b.addEventListener('click', onClick);
     return b;
   }
@@ -343,18 +347,18 @@ export default async function projectView(root, { id }) {
 
       const marks = document.createElement('span');
       marks.className = 'page-marks';
-      if (page.nativeText) marks.append(mark('T', '有原生文字層，不需要 OCR'));
-      if (!page.corners) marks.append(mark('◳', '尚未透視校正'));
+      if (page.nativeText) marks.append(mark('type', '有原生文字層，不需要 OCR'));
+      if (!page.corners) marks.append(mark('crop', '尚未透視校正'));
 
       cell.append(img, num, pill, marks);
       grid.append(cell);
     }
   }
 
-  function mark(text, title) {
+  function mark(iconName, title) {
     const s = document.createElement('i');
     s.className = 'page-mark';
-    s.textContent = text;
+    s.append(icon(iconName, { size: 13, stroke: 2.2 }));
     s.title = title;
     return s;
   }

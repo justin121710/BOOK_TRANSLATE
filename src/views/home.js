@@ -1,6 +1,7 @@
 import { tpl, setTitle, go } from '../ui/router.js';
 import { toast } from '../ui/toast.js';
 import { askText, askConfirm } from '../ui/dialog.js';
+import { icon } from '../ui/icons.js';
 import { hasKeys, missingKeys } from '../state/settings.js';
 import * as db from '../state/db.js';
 
@@ -70,8 +71,8 @@ export default async function homeView(root) {
 
       const del = document.createElement('button');
       del.className = 'icon-btn';
-      del.textContent = '🗑';
-      del.setAttribute('aria-label', '刪除');
+      del.append(icon('trash', { size: 18 }));
+      del.setAttribute('aria-label', `刪除「${p.name}」`);
       del.addEventListener('click', async (e) => {
         e.stopPropagation();
         const yes = await askConfirm(`刪除「${p.name}」？`, {

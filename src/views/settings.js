@@ -1,6 +1,7 @@
 import { tpl, setTitle } from '../ui/router.js';
 import { toast, ok, pending } from '../ui/toast.js';
 import { askConfirm } from '../ui/dialog.js';
+import { icon } from '../ui/icons.js';
 import { settings, clearKeys } from '../state/settings.js';
 import * as db from '../state/db.js';
 import { FONTS, fontStatus, loadFont, dropFont } from '../pdf/fonts.js';
@@ -23,11 +24,13 @@ export default function settingsView(root) {
 
   // 顯示／隱藏金鑰
   root.querySelectorAll('[data-reveal]').forEach(btn => {
+    btn.append(icon('eye', { size: 18 }));
     btn.addEventListener('click', () => {
       const input = $(btn.dataset.reveal);
       const shown = input.type === 'text';
       input.type = shown ? 'password' : 'text';
-      btn.textContent = shown ? '👁' : '🙈';
+      btn.replaceChildren(icon(shown ? 'eye' : 'eyeOff', { size: 18 }));
+      btn.setAttribute('aria-label', shown ? '顯示金鑰' : '隱藏金鑰');
     });
   });
 
@@ -63,7 +66,7 @@ export default function settingsView(root) {
     el.style.color = '';
     try {
       await fn();
-      el.textContent = `${label}：可用 ✓`;
+      el.textContent = `${label}：可用`;
       el.style.color = 'var(--ok)';
     } catch (err) {
       el.textContent = `${label}：${err.message}`;
@@ -102,8 +105,9 @@ export default function settingsView(root) {
       if (f.cached) {
         const del = document.createElement('button');
         del.className = 'icon-btn';
-        del.textContent = '🗑';
+        del.append(icon('trash', { size: 18 }));
         del.title = '刪除快取';
+        del.setAttribute('aria-label', `刪除 ${f.label} 的快取`);
         del.addEventListener('click', async () => {
           await dropFont(f.id);
           toast(`已刪除 ${f.label} 的快取`);

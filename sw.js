@@ -16,6 +16,7 @@ const SHELL_FILES = [
   './src/ui/toast.js',
   './src/ui/dialog.js',
   './src/ui/cropper.js',
+  './src/ui/icons.js',
   './src/input/pages.js',
   './src/input/pdfin.js',
   './src/ocr/index.js',
