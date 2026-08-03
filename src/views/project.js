@@ -2,11 +2,12 @@ import { setTitle, go } from '../ui/router.js';
 import { askText, askConfirm } from '../ui/dialog.js';
 import { toast, ok, bad, pending } from '../ui/toast.js';
 import * as db from '../state/db.js';
+import { settings } from '../state/settings.js';
 import { addImagePage, listPages } from '../input/pages.js';
 
 const STATUS = {
   pending:    { label: '待處理', cls: '' },
-  ocr:        { label: '辨識中', cls: 'busy' },
+  ocr:        { label: '已辨識', cls: 'busy' },
   translated: { label: '已翻譯', cls: 'busy' },
   done:       { label: '完成',   cls: 'ok' },
   failed:     { label: '失敗',   cls: 'bad' },
@@ -67,6 +68,14 @@ export default async function projectView(root, { id }) {
 
   /* ---------- 頁面格線 ---------- */
 
+  /* ---------- 處理 ---------- */
+
+  const runBar = document.createElement('div');
+  runBar.className = 'row-gap';
+  const ocrBtn = action('🔍 辨識文字', runOcr);
+  ocrBtn.classList.add('btn-primary');
+  runBar.append(ocrBtn);
+
   const grid = document.createElement('div');
   grid.className = 'page-grid';
 
@@ -76,7 +85,7 @@ export default async function projectView(root, { id }) {
     '還沒有任何頁面。拍書頁時盡量把書壓平、讓整頁都入鏡，' +
     '匯入後可以拖四個角做透視校正。';
 
-  sec.append(head, bar, empty, grid);
+  sec.append(head, bar, runBar, empty, grid);
   root.append(sec);
 
   await paint();
@@ -173,11 +182,67 @@ export default async function projectView(root, { id }) {
     });
   }
 
+  async function runOcr() {
+    const pages = await listPages(project.id);
+    const todo = pages.filter(p => p.status === 'pending' || p.status === 'failed');
+
+    if (!todo.length) {
+      toast(pages.length ? '所有頁面都已經辨識過了' : '還沒有頁面');
+      return;
+    }
+    if (!settings.googleKey && todo.some(p => !p.nativeText?.length)) {
+      bad('尚未設定 Google Cloud Vision 金鑰');
+      return;
+    }
+
+    const free = todo.filter(p => p.nativeText?.length).length;
+    const paid = todo.length - free;
+    const uncorrected = todo.filter(p => !p.corners && !p.nativeText?.length).length;
+
+    const detail = [
+      paid ? `${paid} 頁會送 Google Vision 辨識，約 US$${(paid * 0.0015).toFixed(3)}（每月前 1000 頁免費）。` : '',
+      free ? `${free} 頁有原生文字層，直接取用座標，不花錢。` : '',
+      uncorrected ? `\n注意：有 ${uncorrected} 頁還沒做透視校正。拍歪的頁面直接辨識，座標會跟著歪，重排後會對不上。` : '',
+    ].filter(Boolean).join('\n');
+
+    const yes = await askConfirm(`辨識 ${todo.length} 頁？`, { detail, okLabel: '開始' });
+    if (!yes) return;
+
+    ocrBtn.disabled = true;
+    const p = pending(`辨識中 0/${todo.length}`);
+    let wake = null;
+    try {
+      // 手機螢幕一暗就會凍住背景工作，批次跑到一半停掉最讓人惱火
+      wake = await navigator.wakeLock?.request('screen').catch(() => null);
+
+      const { recognisePages } = await import('../ocr/index.js');
+      const res = await recognisePages(todo, {
+        onProgress: (n, total) => p.update(`辨識中 ${n}/${total}`),
+      });
+
+      if (res.failed) {
+        p.done(`完成 ${res.done} 頁，失敗 ${res.failed} 頁`, 'bad');
+        for (const e of res.errors.slice(0, 3)) bad(`第 ${e.page} 頁：${e.message}`);
+      } else {
+        p.done(`已辨識 ${res.done} 頁`, 'ok');
+      }
+      await db.touchProject(project.id);
+    } catch (e) {
+      p.done();
+      bad('辨識失敗：' + e.message);
+    } finally {
+      wake?.release?.().catch(() => {});
+      ocrBtn.disabled = false;
+      paint();
+    }
+  }
+
   async function paint() {
     urls.splice(0).forEach(u => URL.revokeObjectURL(u));
 
     const pages = await listPages(project.id);
     empty.hidden = pages.length > 0;
+    ocrBtn.disabled = pages.length === 0;
     grid.replaceChildren();
 
     for (const page of pages) {

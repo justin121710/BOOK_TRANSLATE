@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>OCR 解析驗證</title>
+<style>
+  body { background:#fff; color:#111; font:13px/1.6 system-ui; margin:12px; max-width:900px; }
+  pre { background:#f5f5f5; padding:10px; white-space:pre-wrap; font-size:12px; }
+  .pass { color:#0a0; } .fail { color:#c00; font-weight:700; }
+  h3 { margin:18px 0 6px; font-size:14px; }
+</style>
+<pre id="log"></pre>
+<script type="module">
+import { parseVision } from '../src/ocr/parse.js';
+import { parseNative } from '../src/ocr/native.js';
+
+const out = [];
+let fails = 0;
+const log = (s='') => out.push(s);
+const ok = (cond, label, extra='') => {
+  if (!cond) fails++;
+  log(`${cond ? '  ✓' : '  ✗ 失敗'} ${label}${extra ? '  → ' + extra : ''}`);
+};
+
+/* ---------- 樣本工具：造出 Vision 那種巢狀結構 ---------- */
+
+const vert = (v) => ({ vertices: [
+  { x: v.x, y: v.y }, { x: v.x + v.w, y: v.y },
+  { x: v.x + v.w, y: v.y + v.h }, { x: v.x, y: v.y + v.h },
+]});
+
+/** 直排的一欄：字由上往下排，欄的 x 是右緣往左算 */
+function column(text, xRight, yTop, size, { ruby = null, rubyAt = 0 } = {}) {
+  const words = [];
+  [...text].forEach((ch, i) => {
+    words.push({
+      boundingBox: vert({ x: xRight - size, y: yTop + i * size, w: size, h: size }),
+      symbols: [{ text: ch }],
+    });
+  });
+  if (ruby) {
+    // 振り仮名在直排時貼在基字的右側，字級約一半
+    const rs = Math.round(size * 0.45);
+    [...ruby].forEach((ch, i) => {
+      words.push({
+        boundingBox: vert({ x: xRight, y: yTop + rubyAt * size + i * rs, w: rs, h: rs }),
+        symbols: [{ text: ch }],
+      });
+    });
+  }
+  return words;
+}
+
+/** 橫排的一行 */
+function row(text, xLeft, yTop, size) {
+  return [...text].map((ch, i) => ({
+    boundingBox: vert({ x: xLeft + i * size, y: yTop, w: size, h: size }),
+    symbols: [{ text: ch }],
+  }));
+}
+
+const paraOf = (words) => {
+  // 和 parse.js 一樣要把省略的欄位當成 0，不然 Math.min 會拿到 NaN
+  const xs = words.flatMap(w => w.boundingBox.vertices.map(v => v.x || 0));
+  const ys = words.flatMap(w => w.boundingBox.vertices.map(v => v.y || 0));
+  return {
+    boundingBox: vert({ x: Math.min(...xs), y: Math.min(...ys),
+                        w: Math.max(...xs)-Math.min(...xs), h: Math.max(...ys)-Math.min(...ys) }),
+    words,
+  };
+};
+const pageOf = (paras, w=800, h=1120) => ({
+  fullTextAnnotation: { pages: [{ width: w, height: h,
+    blocks: paras.map(p => ({ blockType: 'TEXT', paragraphs: [p] })) }] }
+});
+
+/* ================= 測試 1：一個段落內含三欄直排 ================= */
+
+log('【1】單一段落內的三欄直排（欄序應為右→左）');
+{
+  const S = 32;
+  const words = [
+    ...column('吾輩は猫である', 740, 100, S),
+    ...column('名前はまだ無い', 700, 100, S),
+    ...column('どこで生れたか', 660, 100, S),
+  ];
+  const r = parseVision(pageOf([paraOf(words)]));
+  const b = r.blocks[0];
+
+  ok(r.vertical === true, '整頁判定為直排');
+  ok(b.vertical === true, '區塊判定為直排');
+  ok(b.lines.length === 3, '切出三欄', `實際 ${b.lines.length}`);
+  ok(b.lines[0].text === '吾輩は猫である', '第一欄是最右邊那欄', b.lines[0].text);
+  ok(b.lines[2].text === 'どこで生れたか', '最後一欄是最左邊那欄', b.lines[2].text);
+  ok(Math.abs(b.fontSize - S) < 2, `字級估計接近 ${S}`, b.fontSize.toFixed(1));
+}
+
+/* ================= 測試 2：三個獨立段落的欄序 ================= */
+
+log('\n【2】三個獨立段落（區塊順序應為右→左）');
+{
+  const S = 32;
+  const r = parseVision(pageOf([
+    paraOf(column('左のはしら', 300, 100, S)),
+    paraOf(column('まんなか',   500, 100, S)),
+    paraOf(column('みぎのはし', 700, 100, S)),
+  ]));
+  ok(r.blocks.length === 3, '三個區塊', String(r.blocks.length));
+  ok(r.blocks[0].srcText === 'みぎのはし', '最右邊的區塊排第一', r.blocks[0].srcText);
+  ok(r.blocks[2].srcText === '左のはしら', '最左邊的區塊排最後', r.blocks[2].srcText);
+}
+
+/* ================= 測試 3：振り仮名剔除 ================= */
+
+log('\n【3】振り仮名剔除');
+{
+  const S = 32;
+  const words = column('吾輩は猫である', 700, 100, S, { ruby: 'わがはい', rubyAt: 0 });
+  const r = parseVision(pageOf([paraOf(words)]), { dropRuby: true });
+  const text = r.blocks[0].srcText.replace(/\n/g, '');
+
+  ok(!/わがはい/.test(text), '振り仮名已被丟掉', text);
+  ok(text.includes('吾輩は猫である'), '內文完整保留', text);
+  ok(r.rubyDropped.length > 0, '有記錄丟掉的內容', r.rubyDropped.join(''));
+
+  const keep = parseVision(pageOf([paraOf(words)]), { dropRuby: false });
+  ok(/わ/.test(keep.blocks[0].srcText), 'dropRuby=false 時不丟');
+}
+
+log('\n【3b】整段都是小字假名時不該全部丟光（保險機制）');
+{
+  const S = 14;
+  const words = column('ぜんぶちいさいかな', 700, 100, S);
+  const r = parseVision(pageOf([paraOf(words)]), { dropRuby: true });
+  const text = (r.blocks[0]?.srcText || '').replace(/\n/g, '');
+  ok(text === 'ぜんぶちいさいかな', '純假名小字內文沒有被誤殺', text);
+}
+
+log('\n【3c】小字但含漢字的註解不該被當成振り仮名');
+{
+  const S = 32;
+  const words = [
+    ...column('本文の大きな字', 700, 100, S),
+    ...column('注釈は漢字入り', 640, 100, Math.round(S * 0.5)),
+  ];
+  const r = parseVision(pageOf([paraOf(words)]), { dropRuby: true });
+  const text = r.blocks.map(b => b.srcText).join('').replace(/\n/g, '');
+  ok(text.includes('注釈は漢字入り'), '含漢字的小字保留下來', text);
+}
+
+/* ================= 測試 4：橫排 ================= */
+
+log('\n【4】橫排頁');
+{
+  const S = 24;
+  const r = parseVision(pageOf([paraOf([
+    ...row('いちぎょうめ', 100, 100, S),
+    ...row('にぎょうめ',   100, 140, S),
+  ])]));
+  const b = r.blocks[0];
+  ok(r.vertical === false, '整頁判定為橫排');
+  ok(b.lines.length === 2, '切出兩行', String(b.lines.length));
+  ok(b.lines[0].text === 'いちぎょうめ', '第一行在上', b.lines[0].text);
+}
+
+/* ================= 測試 5：直排內文 + 橫排頁碼混排 ================= */
+
+log('\n【5】直排內文配橫排頁碼（少量橫排字不該翻轉整頁）');
+{
+  const S = 32;
+  const r = parseVision(pageOf([
+    paraOf(column('これはほんぶんでとてもながいぎょうです', 700, 100, S)),
+    paraOf(column('ふたつめのほんぶんのはしら', 640, 100, S)),
+    paraOf(row('12', 390, 1050, 16)),
+  ]));
+  ok(r.vertical === true, '整頁仍判定為直排（依字數比例而非區塊數）');
+  ok(r.blocks.some(b => b.srcText === '12'), '頁碼有被抓到');
+  ok(r.blocks.find(b => b.srcText === '12').vertical === false, '頁碼本身判定為橫排');
+}
+
+/* ================= 測試 6：vertices 省略 0 的陷阱 ================= */
+
+log('\n【6】Vision 會省略值為 0 的座標欄位');
+{
+  const words = [{
+    // 真實回應長這樣：x=0 時整個 x 欄位不存在
+    boundingBox: { vertices: [{ y: 0 }, { x: 30 }, { x: 30, y: 30 }, { y: 30 }] },
+    symbols: [{ text: '端' }],
+  }];
+  const r = parseVision(pageOf([paraOf(words)]));
+  const bb = r.blocks[0].bbox;
+  ok(bb[0] === 0 && bb[1] === 0, 'x/y 缺欄位時當作 0', JSON.stringify(bb));
+  ok(bb[2] === 30 && bb[3] === 30, '寬高仍然算得出來', JSON.stringify(bb));
+}
+
+log('\n【6b】段落外框退化成零面積時，退回用字的聯集');
+{
+  const words = [
+    { boundingBox: vert({ x: 100, y: 200, w: 30, h: 30 }), symbols: [{ text: '甲' }] },
+    { boundingBox: vert({ x: 100, y: 230, w: 30, h: 30 }), symbols: [{ text: '乙' }] },
+  ];
+  // 故意給一個爛掉的段落外框
+  const r = parseVision(pageOf([{ boundingBox: vert({ x: 0, y: 0, w: 0, h: 0 }), words }]));
+  const bb = r.blocks[0].bbox;
+  ok(bb[2] > 0 && bb[3] > 0, '區塊沒有塌成一個點', JSON.stringify(bb));
+  ok(bb[0] === 100 && bb[1] === 200, '位置取自字的聯集', JSON.stringify(bb));
+}
+
+/* ================= 測試 7：PDF 原生文字層走同一種形狀 ================= */
+
+log('\n【7】原生文字層解析（形狀需與 Vision 那條路一致）');
+{
+  const items = [
+    { str: '第一章', vertical: false, bbox: [120, 121, 162, 54] },
+    { str: 'どこで生れたかとんと見当がつかぬ。', vertical: false, bbox: [120, 255, 612, 36] },
+    { str: '何でも薄暗いじめじめした所で', vertical: false, bbox: [120, 333, 504, 36] },
+  ];
+  const r = parseNative(items);
+  ok(r.blocks.length >= 1, '有產出區塊', String(r.blocks.length));
+  const first = r.blocks[0];
+  ok(Array.isArray(first.bbox) && first.bbox.length === 4, 'bbox 是四元素陣列');
+  for (const k of ['vertical','bbox','srcText','dstText','fontSize','lines','kind','skipTranslate','order']) {
+    ok(k in first, `欄位 ${k} 存在`);
+  }
+  ok(r.blocks.map(b=>b.srcText).join('').includes('第一章'), '文字有帶進來');
+}
+
+/* ---------- 收尾 ---------- */
+
+log('\n' + (fails === 0 ? '✅ 全部通過' : `❌ 有 ${fails} 項失敗`));
+const el = document.getElementById('log');
+el.textContent = out.join('\n');
+el.className = fails === 0 ? 'pass' : 'fail';
+document.title = fails === 0 ? 'PASS' : 'FAIL ' + fails;
+</script>

@@ -389,6 +389,47 @@ input:focus, select:focus, textarea:focus {
 }
 .page-bar-secondary .btn { flex: 1; }
 
+/* ---------- 辨識結果清單 ---------- */
+
+.block-list {
+  list-style: none;
+  counter-reset: blk;
+  margin: 4px 0 0;
+  padding: 0;
+  width: 100%;
+  max-width: 640px;
+  display: grid;
+  gap: 6px;
+}
+
+.block-item {
+  counter-increment: blk;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  font-size: 13px;
+}
+.block-item::before {
+  content: counter(blk);
+  min-width: 20px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.block-item .pill { font-size: 11px; padding: 1px 7px; }
+.block-item.vertical .pill { color: #6fb0ff; background: rgb(80 160 255 / .14); }
+
+.block-text {
+  color: var(--ink-dim);
+  word-break: break-all;
+  line-height: 1.5;
+}
+
 /* ---------- 四角校正 ---------- */
 
 .cropper {

@@ -6,7 +6,7 @@ import * as db from '../state/db.js';
 
 const STATUS_LABEL = {
   pending: '待處理',
-  ocr: '辨識中',
+  ocr: '已辨識',
   translated: '已翻譯',
   done: '完成',
   failed: '失敗',

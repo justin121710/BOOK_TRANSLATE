@@ -34,6 +34,7 @@ export default async function pageView(root, { id }) {
   let editor = null;
   let objectUrl = null;
   let current = page;
+  let showBlocks = true;
 
   await showPreview();
 
@@ -52,19 +53,54 @@ export default async function pageView(root, { id }) {
     stage.replaceChildren();
     bar.replaceChildren();
 
+    const blocks = (await db.getBy('blocks', 'pageId', current.id))
+      .sort((a, b) => a.order - b.order);
+
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = URL.createObjectURL(current.procBlob || current.origBlob);
 
-    const img = document.createElement('img');
-    img.className = 'page-full';
-    img.src = objectUrl;
-    img.alt = `第 ${current.index + 1} 頁`;
-    stage.append(img);
+    if (blocks.length && showBlocks) {
+      // 疊上辨識結果：框、閱讀順序編號、直排與橫排用不同顏色
+      const { renderOverlay } = await import('../ocr/index.js');
+      const canvas = await renderOverlay(current, blocks, { scale: 1 });
+      canvas.className = 'page-full';
+      stage.append(canvas);
+    } else {
+      const img = document.createElement('img');
+      img.className = 'page-full';
+      img.src = objectUrl;
+      img.alt = `第 ${current.index + 1} 頁`;
+      stage.append(img);
+    }
 
     const info = document.createElement('p');
     info.className = 'hint page-info';
-    info.textContent = describe(current);
+    info.textContent = describe(current, blocks);
     stage.append(info);
+
+    if (blocks.length) {
+      const toggle = document.createElement('button');
+      toggle.className = 'link';
+      toggle.textContent = showBlocks ? '隱藏辨識框' : '顯示辨識框';
+      toggle.addEventListener('click', () => { showBlocks = !showBlocks; showPreview(); });
+      stage.append(toggle);
+
+      const list = document.createElement('ol');
+      list.className = 'block-list';
+      for (const b of blocks) {
+        const li = document.createElement('li');
+        li.className = 'block-item' + (b.vertical ? ' vertical' : '');
+        const tag = document.createElement('span');
+        tag.className = 'pill';
+        tag.textContent = b.vertical ? '直排' : '橫排';
+        const txt = document.createElement('span');
+        txt.className = 'block-text';
+        txt.textContent = b.srcText.replace(/\n/g, '⏎');
+        li.append(tag, txt);
+        list.append(li);
+      }
+      stage.append(list);
+    }
 
     bar.append(
       navBtn('‹ 上一頁', pos > 0, () => go('page', { id: siblings[pos - 1].id })),
@@ -158,10 +194,15 @@ export default async function pageView(root, { id }) {
   }
 }
 
-function describe(page) {
+function describe(page, blocks = []) {
   const src = { camera: '相機', photo: '相簿', pdf: 'PDF', epub: 'EPUB' }[page.source] || page.source;
   const bits = [`來源 ${src}`, `${page.procW || page.origW}×${page.procH || page.origH}`];
   if (page.nativeText) bits.push(`原生文字層 ${page.nativeText.length} 段（不需 OCR）`);
   if (!page.corners) bits.push('尚未透視校正');
+  if (blocks.length) {
+    bits.push(`${blocks.length} 個文字塊`);
+    bits.push(page.vertical ? '直排' : '橫排');
+    if (page.rubyDropped) bits.push(`丟棄振り仮名 ${page.rubyDropped} 處`);
+  }
   return bits.join('　·　');
 }
