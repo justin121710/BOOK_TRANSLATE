@@ -5,7 +5,8 @@
 
 行動優先的 PWA，用 Safari 開啟後「分享 → 加到主畫面」就會變成 iPhone 上的 App。
 
-完整規格、技術決策與已知衝突請見 **[SPEC.md](SPEC.md)**。
+- **[docs/workflow.md](docs/workflow.md)** — 使用流程、已知限制、尚未做的部分
+- **[SPEC.md](SPEC.md)** — 完整規格、技術決策與已知衝突
 
 ---
 
