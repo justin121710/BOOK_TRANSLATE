@@ -157,3 +157,39 @@ export function estimateCost(model, { input, output }) {
   const p = PRICE[model] || PRICE['claude-sonnet-5'];
   return (input / 1e6) * p.in + (output / 1e6) * p.out;
 }
+
+/* ---------- Gemini ---------- */
+
+/**
+ * 把 Claude 的 input_schema 轉成 Gemini 的 responseSchema。
+ * 兩邊都是 JSON Schema 的子集，但 Gemini 走 OpenAPI 的型別列舉，型別名稱要大寫，
+ * 而且只認得少數幾個關鍵字，多餘的欄位會讓請求整個被拒。
+ */
+export function toGeminiSchema(node) {
+  if (!node || typeof node !== 'object') return node;
+
+  const out = {};
+  if (node.type) out.type = String(node.type).toUpperCase();
+  if (node.description) out.description = node.description;
+  if (node.enum) out.enum = node.enum;
+
+  if (node.properties) {
+    out.properties = Object.fromEntries(
+      Object.entries(node.properties).map(([k, v]) => [k, toGeminiSchema(v)]));
+    // Gemini 不保證欄位順序，明確指定可讓輸出穩定一點
+    out.propertyOrdering = Object.keys(node.properties);
+  }
+  if (node.items) out.items = toGeminiSchema(node.items);
+  if (node.required) out.required = node.required;
+
+  return out;
+}
+
+/** 送給 Gemini 的輸出結構，等同 Claude 那邊的 TOOL.input_schema。 */
+export const GEMINI_SCHEMA = toGeminiSchema(TOOL.input_schema);
+
+/** Gemini 沒有工具呼叫這一層，指令要多說一句輸出格式。 */
+export const GEMINI_SYSTEM = SYSTEM.replace(
+  '一律呼叫 submit_page 工具回報結果。每個輸入區塊都要有對應的輸出，id 必須一致。',
+  '直接輸出符合指定結構的 JSON，不要包在程式碼圍欄裡，不要加任何說明文字。\n' +
+  '每個輸入區塊都要有對應的輸出，id 必須一致。');

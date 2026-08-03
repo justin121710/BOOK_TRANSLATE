@@ -14,7 +14,7 @@
 <div class="row" id="out"></div>
 <script type="module">
 import { layoutVertical, layoutHorizontal, fitText } from '../src/render/layout.js';
-import { segment, breakLines, placement, ROTATE, CORNER_TOP_RIGHT } from '../src/render/rules.js';
+import { segment, breakLines, placement, ROTATE, VERTICAL_PUNCT, PUNCT_MODE } from '../src/render/rules.js';
 import { drawGlyphs } from '../src/render/canvas.js';
 
 const out = [];
@@ -29,10 +29,12 @@ const ok = (c, label, extra='') => {
 
 log('【1】字元規則');
 {
-  // 位移量要夠大才推得到右上角：CJK 標點的墨水原本偏在 em 框左下
-  ok(placement('。').offsetX >= 0.4 && placement('。').offsetY <= -0.4, '。移到字格右上角',
-     JSON.stringify(placement('。')));
-  ok(placement('、').offsetX >= 0.4 && placement('、').offsetY <= -0.4, '、同樣移到右上');
+  /* 預設 PUNCT_MODE='center'：句號頓號正常置中擺放，不推到角落。
+     CJK 標點的墨水原本偏在 em 框左下，所以「置中」仍需要往右上推約四分之一字身。 */
+  const dot = placement('。');
+  ok(dot.offsetX > 0.1 && dot.offsetX < 0.35, '。往右推到置中而非角落', JSON.stringify(dot));
+  ok(dot.offsetY < -0.1 && dot.offsetY > -0.35, '。垂直方向同樣只推到置中');
+  ok(placement('、').offsetX === dot.offsetX, '、與。用同一組位移');
   ok(placement('「').rotate === true, '「需要旋轉');
   ok(placement('）').rotate === true, '）需要旋轉');
   ok(placement('—').rotate === true, '破折號需要旋轉');

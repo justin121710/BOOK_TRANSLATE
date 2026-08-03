@@ -7,6 +7,7 @@ import * as db from '../state/db.js';
 import { FONTS, fontStatus, loadFont, dropFont } from '../pdf/fonts.js';
 import * as vision from '../api/vision.js';
 import * as claude from '../api/claude.js';
+import * as gemini from '../api/gemini.js';
 
 export default function settingsView(root) {
   setTitle('設定');
@@ -16,11 +17,85 @@ export default function settingsView(root) {
 
   const kGoogle = $('kGoogle');
   const kClaude = $('kClaude');
+  const kGemini = $('kGemini');
   const mClaude = $('mClaude');
+  const mGemini = $('mGemini');
+  const provider = $('provider');
 
   kGoogle.value = settings.googleKey;
   kClaude.value = settings.claudeKey;
+  kGemini.value = settings.geminiKey;
   mClaude.value = settings.model;
+  provider.value = settings.provider;
+
+  /* ---------- 供應商切換 ---------- */
+
+  function paintProvider() {
+    const isGemini = provider.value === 'gemini';
+    $('geminiFields').hidden = !isGemini;
+    $('claudeFields').hidden = isGemini;
+    $('providerHint').textContent = isGemini
+      ? '和 Cloud Vision 同一個 Google Cloud 專案，可以共用同一把金鑰，也有免費額度。'
+      : '需要另一把 Anthropic 金鑰。品質可能較好，但多一把鑰匙要管、且沒有來源限制機制。';
+
+    // 資料會流到哪裡取決於選了誰，這句不能寫死
+    $('privacyNote').textContent =
+      '金鑰只存在這支手機的瀏覽器裡，不會上傳到任何伺服器。' +
+      '書頁影像會送往 Google Cloud Vision 辨識，文字會送往 ' +
+      (isGemini ? 'Google Gemini' : 'Anthropic') + ' 翻譯。';
+  }
+  provider.addEventListener('change', () => {
+    settings.provider = provider.value;
+    paintProvider();
+    paintKeyStates();
+  });
+  paintProvider();
+
+  /* ---------- Gemini 模型清單 ---------- */
+
+  // 硬寫模型清單很快就會過時，所以先放已知的，再讓使用者用金鑰向 API 要真正可用的
+  function fillModels(list) {
+    mGemini.replaceChildren(...list.map(m => {
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.label || m.id;
+      return o;
+    }));
+    // 記住的模型若不在清單裡，補一個選項免得選到別的
+    if (!list.some(m => m.id === settings.geminiModel)) {
+      const o = document.createElement('option');
+      o.value = settings.geminiModel;
+      o.textContent = settings.geminiModel + '（未在清單中）';
+      mGemini.prepend(o);
+    }
+    mGemini.value = settings.geminiModel;
+  }
+
+  fillModels([
+    { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash — 快且便宜' },
+    { id: 'gemini-2.5-pro',   label: 'gemini-2.5-pro — 品質較好' },
+  ]);
+
+  mGemini.addEventListener('change', () => { settings.geminiModel = mGemini.value; });
+
+  $('refreshModels').addEventListener('click', async (e) => {
+    settings.googleKey = kGoogle.value.trim();
+    settings.geminiKey = kGemini.value.trim();
+    e.target.disabled = true;
+    const el = $('gemStat');
+    el.textContent = '查詢可用模型…';
+    el.style.color = '';
+    try {
+      const models = await gemini.listModels();
+      fillModels(models);
+      el.textContent = `找到 ${models.length} 個可用模型`;
+      el.style.color = 'var(--ok)';
+    } catch (err) {
+      el.textContent = err.message;
+      el.style.color = 'var(--danger)';
+    }
+    e.target.disabled = false;
+  });
 
   // 顯示／隱藏金鑰
   root.querySelectorAll('[data-reveal]').forEach(btn => {
@@ -34,10 +109,17 @@ export default function settingsView(root) {
     });
   });
 
-  $('saveKeys').addEventListener('click', () => {
+  function commit() {
     settings.googleKey = kGoogle.value.trim();
     settings.claudeKey = kClaude.value.trim();
+    settings.geminiKey = kGemini.value.trim();
     settings.model = mClaude.value;
+    settings.geminiModel = mGemini.value;
+    settings.provider = provider.value;
+  }
+
+  $('saveKeys').addEventListener('click', () => {
+    commit();
     ok('已儲存');
     paintKeyStates();
   });
@@ -45,17 +127,20 @@ export default function settingsView(root) {
   mClaude.addEventListener('change', () => { settings.model = mClaude.value; });
 
   $('testKeys').addEventListener('click', async (e) => {
-    // 測試打的是輸入框裡的值，使用者不必先按儲存
-    settings.googleKey = kGoogle.value.trim();
-    settings.claudeKey = kClaude.value.trim();
-    settings.model = mClaude.value;
+    commit();   // 測試打的是輸入框裡的值，使用者不必先按儲存
 
     e.target.disabled = true;
     const p = pending('測試中…');
-    await Promise.all([
-      probe('gStat', 'Google Vision', () => vision.ping()),
-      probe('cStat', 'Claude', () => claude.ping()),
-    ]);
+    const jobs = [probe('gStat', 'Google Vision', () => vision.ping())];
+    if (settings.provider === 'gemini') {
+      jobs.push(probe('gemStat', 'Gemini', async () => {
+        const models = await gemini.ping();
+        return `可用，找到 ${models.length} 個模型`;
+      }));
+    } else {
+      jobs.push(probe('cStat', 'Claude', () => claude.ping()));
+    }
+    await Promise.all(jobs);
     p.done();
     e.target.disabled = false;
   });
@@ -65,8 +150,8 @@ export default function settingsView(root) {
     el.textContent = `${label}：測試中…`;
     el.style.color = '';
     try {
-      await fn();
-      el.textContent = `${label}：可用`;
+      const detail = await fn();
+      el.textContent = `${label}：${typeof detail === 'string' ? detail : '可用'}`;
       el.style.color = 'var(--ok)';
     } catch (err) {
       el.textContent = `${label}：${err.message}`;
@@ -75,10 +160,14 @@ export default function settingsView(root) {
   }
 
   function paintKeyStates() {
-    $('gStat').textContent = settings.googleKey ? '已設定，尚未測試' : '未設定';
-    $('cStat').textContent = settings.claudeKey ? '已設定，尚未測試' : '未設定';
-    $('gStat').style.color = '';
-    $('cStat').style.color = '';
+    const set = (id, has, extra = '') => {
+      $(id).textContent = has ? '已設定，尚未測試' + extra : '未設定';
+      $(id).style.color = '';
+    };
+    set('gStat', Boolean(settings.googleKey));
+    set('cStat', Boolean(settings.claudeKey));
+    set('gemStat', Boolean(settings.geminiKey || settings.googleKey),
+        settings.geminiKey ? '' : '（沿用上面的 Google 金鑰）');
   }
   paintKeyStates();
 

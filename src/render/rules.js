@@ -11,8 +11,26 @@ export const ROTATE = new Set([
   '—', '―', '─', '－', '-', '～', '〜', '~', '…', '‥', '＝', '=', '_', '＿',
 ]);
 
-/** 置於字格右上角的標點：句號、頓號、逗號。 */
-export const CORNER_TOP_RIGHT = new Set(['。', '、', '，', '．', '.', ',', '｡', '､']);
+/** 直排時需要特別擺位的標點：句號、頓號、逗號。 */
+export const VERTICAL_PUNCT = new Set(['。', '、', '，', '．', '.', ',', '｡', '､']);
+
+/**
+ * 這些標點在直排時要擺哪裡。
+ *
+ * 'center'（預設）—— 置中，和其他字一樣正常擺放。
+ * 'topRight'      —— 傳統直排排版的做法，擺在字格右上角。
+ *
+ * 慣例上是 topRight，但那個效果偏傳統書籍的味道，看起來會比較「舊」。
+ * 預設改成 center 是刻意的選擇，不是漏做。要切回慣例改這個常數即可。
+ */
+export const PUNCT_MODE = 'center';
+
+/* CJK 字型裡這些標點的墨水本來就偏在 em 框的左下象限，
+   所以「置中」需要往右上各推約四分之一字身，「右上角」則要推約半個字身。 */
+const PUNCT_OFFSET = {
+  center:   { offsetX: 0.23, offsetY: -0.25 },
+  topRight: { offsetX: 0.46, offsetY: -0.5 },
+};
 
 /** 置於字格右下角：起始括號旋轉後要靠下。 */
 export const OPENING = new Set(['（', '(', '［', '[', '｛', '{', '〔', '【', '〖', '「', '『', '〈', '《']);
@@ -49,12 +67,8 @@ export const HALF_WIDTH_IN_VERTICAL = new Set([
  *   offset 以字身大小為單位（1 = 一個字寬）
  */
 export function placement(ch) {
-  if (CORNER_TOP_RIGHT.has(ch)) {
-    /* 。、在直排時要落在字格的右上角。
-       CJK 字型裡這些標點的墨水本來就偏在 em 框的「左下」象限，
-       所以要往右上各推約半個字身才會到位 —— 推少了會看起來卡在中間，
-       那是直排排版最容易露餡的地方。 */
-    return { rotate: false, offsetX: 0.46, offsetY: -0.5 };
+  if (VERTICAL_PUNCT.has(ch)) {
+    return { rotate: false, ...PUNCT_OFFSET[PUNCT_MODE] };
   }
   if (ROTATE.has(ch)) {
     if (OPENING.has(ch)) return { rotate: true, offsetX: 0, offsetY: -0.06 };

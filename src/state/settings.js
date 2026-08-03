@@ -7,6 +7,10 @@ const NS = 'bt.';
 const DEFAULTS = {
   googleKey: '',
   claudeKey: '',
+  // 'gemini' 可與 Vision 共用同一把 Google 金鑰；'claude' 需要另一把 Anthropic 金鑰
+  provider: 'gemini',
+  geminiKey: '',              // 留空就沿用 googleKey
+  geminiModel: 'gemini-2.5-flash',
   model: 'claude-opus-5',
   bodyFont: 'serif',      // serif = 思源宋體（內文）
   titleFont: 'sans',      // sans  = 思源黑體（標題）
@@ -44,13 +48,18 @@ export const settings = new Proxy({}, {
 });
 
 export function hasKeys() {
-  return Boolean(read('googleKey') && read('claudeKey'));
+  return missingKeys().length === 0;
 }
 
 export function missingKeys() {
   const out = [];
   if (!read('googleKey')) out.push('Google Cloud Vision');
-  if (!read('claudeKey')) out.push('Anthropic Claude');
+  if (read('provider') === 'gemini') {
+    // Gemini 沒填就沿用 Vision 那把，所以只要 googleKey 有值就算齊了
+    if (!read('geminiKey') && !read('googleKey')) out.push('Gemini');
+  } else if (!read('claudeKey')) {
+    out.push('Anthropic Claude');
+  }
   return out;
 }
 

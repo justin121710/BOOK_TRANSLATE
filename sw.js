@@ -34,6 +34,7 @@ const SHELL_FILES = [
   './src/state/settings.js',
   './src/api/vision.js',
   './src/api/claude.js',
+  './src/api/gemini.js',
   './src/pdf/fonts.js',
   './src/views/home.js',
   './src/views/project.js',

@@ -65,10 +65,7 @@
   <section class="view pad">
     <h2>設定</h2>
 
-    <div class="banner banner-info">
-      兩組金鑰都只存在這支手機的瀏覽器裡，不會上傳到任何伺服器。
-      書頁影像會送往 Google Cloud Vision 辨識，文字會送往 Anthropic 翻譯。
-    </div>
+    <div class="banner banner-info" id="privacyNote"></div>
 
     <div class="field">
       <label for="kGoogle">Google Cloud Vision API 金鑰</label>
@@ -85,18 +82,47 @@
     </div>
 
     <div class="field">
+      <label for="provider">翻譯供應商</label>
+      <select id="provider">
+        <option value="gemini">Google Gemini — 可與上面同一把金鑰共用</option>
+        <option value="claude">Anthropic Claude — 需要另一把金鑰</option>
+      </select>
+      <p class="hint" id="providerHint"></p>
+    </div>
+
+    <div class="field" id="geminiFields">
+      <label for="kGemini">Gemini API 金鑰<span class="label-note">（可留空）</span></label>
+      <div class="input-wrap">
+        <input id="kGemini" type="password" autocomplete="off" autocapitalize="off"
+               spellcheck="false" placeholder="留空則沿用上面的 Google 金鑰">
+        <button class="reveal" data-reveal="kGemini" aria-label="顯示金鑰"></button>
+      </div>
+      <p class="hint">
+        留空就沿用上面那把 Google 金鑰。共用的前提是那把金鑰的 API 限制要加上
+        <strong>Generative Language API</strong>，否則會被擋。
+      </p>
+
+      <label for="mGemini" style="margin-top:14px">Gemini 模型</label>
+      <div class="row-gap" style="margin-top:6px">
+        <select id="mGemini" style="flex:1"></select>
+        <button id="refreshModels" class="btn">重新取得清單</button>
+      </div>
+      <p class="hint" id="gemStat"></p>
+    </div>
+
+    <div class="field" id="claudeFields">
       <label for="kClaude">Anthropic (Claude) API 金鑰</label>
       <div class="input-wrap">
         <input id="kClaude" type="password" autocomplete="off" autocapitalize="off"
                spellcheck="false" placeholder="sk-ant-…">
         <button class="reveal" data-reveal="kClaude" aria-label="顯示金鑰"></button>
       </div>
-      <p class="hint">用於翻譯與版面語意判讀。</p>
+      <p class="hint">
+        這把金鑰沒有來源限制機制，外流後在任何地方都能用，建議單獨建一把並設花費上限。
+      </p>
       <p class="hint" id="cStat"></p>
-    </div>
 
-    <div class="field">
-      <label for="mClaude">翻譯模型</label>
+      <label for="mClaude" style="margin-top:14px">Claude 模型</label>
       <select id="mClaude">
         <option value="claude-opus-5">Opus 5 — 品質最好，成本最高</option>
         <option value="claude-sonnet-5">Sonnet 5 — 品質好，成本低很多</option>

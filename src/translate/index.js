@@ -3,8 +3,76 @@
 import * as db from '../state/db.js';
 import { settings } from '../state/settings.js';
 import { messages, ClaudeError } from '../api/claude.js';
-import { SYSTEM, TOOL, NO_TRANSLATE, buildUserMessage, estimateTokens, estimateCost } from './prompt.js';
+import * as gemini from '../api/gemini.js';
+import {
+  SYSTEM, TOOL, NO_TRANSLATE, buildUserMessage, estimateTokens, estimateCost,
+  GEMINI_SYSTEM, GEMINI_SCHEMA,
+} from './prompt.js';
 import * as glossary from './glossary.js';
+
+/**
+ * 兩家供應商的差異只在這一層：送出去、拿回結構化結果、回報用量。
+ * 上層的分類、詞彙表、錯誤處理完全共用。
+ *
+ * @returns {Promise<{result: object, usage: object, cost: number}>}
+ *   result 的形狀為 { blocks: [...], glossary: [...] }
+ */
+async function askModel(userMessage, { maxTokens = 8000, signal } = {}) {
+  if (settings.provider === 'gemini') {
+    const r = await gemini.generate({
+      system: GEMINI_SYSTEM,
+      user: userMessage,
+      schema: GEMINI_SCHEMA,
+      maxOutputTokens: maxTokens,
+    }, { signal });
+
+    const result = gemini.parseJson(r.text);
+    if (!result || !Array.isArray(result.blocks)) {
+      throw new gemini.GeminiError('模型沒有回傳合乎結構的結果，請重試', 200);
+    }
+
+    const p = gemini.priceOf(settings.geminiModel);
+    const input = r.usage?.promptTokenCount || 0;
+    const output = r.usage?.candidatesTokenCount || 0;
+    return {
+      result,
+      usage: { input_tokens: input, output_tokens: output },
+      cost: (input / 1e6) * p.in + (output / 1e6) * p.out,
+    };
+  }
+
+  const res = await messages({
+    max_tokens: maxTokens,
+    system: SYSTEM,
+    tools: [TOOL],
+    tool_choice: { type: 'tool', name: TOOL.name },
+    messages: [{ role: 'user', content: userMessage }],
+  }, { signal });
+
+  const call = res.content?.find(c => c.type === 'tool_use' && c.name === TOOL.name);
+  if (!call) throw new ClaudeError('模型沒有回傳結構化結果，請重試', 200, res.stop_reason);
+
+  return {
+    result: call.input,
+    usage: res.usage,
+    cost: estimateCost(settings.model, {
+      input: res.usage?.input_tokens || 0,
+      output: res.usage?.output_tokens || 0,
+    }),
+  };
+}
+
+/** 目前供應商的模型代號，用於顯示與費用估算。 */
+export function currentModel() {
+  return settings.provider === 'gemini' ? settings.geminiModel : settings.model;
+}
+
+/** 目前供應商是否已備妥金鑰。 */
+export function providerReady() {
+  return settings.provider === 'gemini'
+    ? Boolean(gemini.keyOf())
+    : Boolean(settings.claudeKey);
+}
 
 /**
  * 翻譯一頁。
@@ -32,22 +100,13 @@ export async function translatePage(page, opts = {}) {
     tail: opts.tail,
   });
 
-  const res = await messages({
-    max_tokens: 8000,
-    system: SYSTEM,
-    tools: [TOOL],
-    tool_choice: { type: 'tool', name: TOOL.name },
-    messages: [{ role: 'user', content: userMessage }],
-  }, { signal: opts.signal });
-
-  const call = res.content?.find(c => c.type === 'tool_use' && c.name === TOOL.name);
-  if (!call) throw new ClaudeError('模型沒有回傳結構化結果，請重試', 200, res.stop_reason);
+  const { result, usage, cost } = await askModel(userMessage, { signal: opts.signal });
 
   const byId = new Map(blocks.map(b => [b.id, b]));
   const writes = [];
   let translated = 0;
 
-  for (const item of call.input.blocks || []) {
+  for (const item of result.blocks || []) {
     const block = byId.get(item.id);
     if (!block) continue;   // 模型偶爾會捏造 id，忽略即可
 
@@ -63,7 +122,7 @@ export async function translatePage(page, opts = {}) {
   }
 
   // 模型漏掉的區塊不能就這樣消失，標記出來讓使用者看得到
-  const returned = new Set((call.input.blocks || []).map(b => b.id));
+  const returned = new Set((result.blocks || []).map(b => b.id));
   for (const b of pending) {
     if (!returned.has(b.id)) {
       b.dstText = null;
@@ -74,7 +133,7 @@ export async function translatePage(page, opts = {}) {
 
   if (writes.length) await db.putMany('blocks', writes);
 
-  const gloss = await glossary.merge(page.projectId, call.input.glossary || []);
+  const gloss = await glossary.merge(page.projectId, result.glossary || []);
 
   const missing = writes.filter(b => b.error).length;
   await db.put('pages', {
@@ -83,21 +142,7 @@ export async function translatePage(page, opts = {}) {
     error: missing ? `有 ${missing} 個區塊沒有譯文` : null,
   });
 
-  return {
-    blocks: writes,
-    translated,
-    glossary: gloss,
-    usage: res.usage,
-    cost: costOf(res.usage),
-  };
-}
-
-function costOf(usage) {
-  if (!usage) return 0;
-  return estimateCost(settings.model, {
-    input: usage.input_tokens || 0,
-    output: usage.output_tokens || 0,
-  });
+  return { blocks: writes, translated, glossary: gloss, usage, cost };
 }
 
 /** 取這一頁末尾的正文，當作下一頁的銜接上下文。 */
@@ -154,16 +199,8 @@ export async function retranslateBlock(block, { instruction = '', signal } = {})
     user += `\n\n## 這一塊的額外指示\n${instruction}`;
   }
 
-  const res = await messages({
-    max_tokens: 4000,
-    system: SYSTEM,
-    tools: [TOOL],
-    tool_choice: { type: 'tool', name: TOOL.name },
-    messages: [{ role: 'user', content: user }],
-  }, { signal });
-
-  const call = res.content?.find(c => c.type === 'tool_use' && c.name === TOOL.name);
-  const item = call?.input?.blocks?.[0];
+  const { result, usage, cost } = await askModel(user, { maxTokens: 4000, signal });
+  const item = result.blocks?.[0];
   if (!item) throw new ClaudeError('模型沒有回傳結果，請重試', 200);
 
   const next = {
@@ -174,9 +211,9 @@ export async function retranslateBlock(block, { instruction = '', signal } = {})
     error: null,
   };
   await db.put('blocks', next);
-  await glossary.merge(block.projectId, call.input.glossary || []);
+  await glossary.merge(block.projectId, result.glossary || []);
 
-  return { block: next, cost: costOf(res.usage), usage: res.usage };
+  return { block: next, cost, usage };
 }
 
 /** 事前估算整批的花費，給確認對話框用。 */
@@ -194,9 +231,12 @@ export async function estimateBatch(pages) {
     input += t.input;
     output += t.output;
   }
-  return {
-    blockCount,
-    input, output,
-    cost: estimateCost(settings.model, { input, output }),
-  };
+  let cost;
+  if (settings.provider === 'gemini') {
+    const p = gemini.priceOf(settings.geminiModel);
+    cost = (input / 1e6) * p.in + (output / 1e6) * p.out;
+  } else {
+    cost = estimateCost(settings.model, { input, output });
+  }
+  return { blockCount, input, output, cost, model: currentModel() };
 }

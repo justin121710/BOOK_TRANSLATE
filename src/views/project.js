@@ -252,16 +252,18 @@ export default async function projectView(root, { id }) {
         : '沒有待翻譯的頁面');
       return;
     }
-    if (!settings.claudeKey) {
-      bad('尚未設定 Anthropic 金鑰');
-      return;
-    }
-
     const p0 = pending('估算費用…');
-    let est;
+    let est, tr;
     try {
-      const { estimateBatch } = await import('../translate/index.js');
-      est = await estimateBatch(todo);
+      tr = await import('../translate/index.js');
+      if (!tr.providerReady()) {
+        p0.done();
+        bad(settings.provider === 'gemini'
+          ? '尚未設定 Google 金鑰（Gemini 可沿用 Vision 那把）'
+          : '尚未設定 Anthropic 金鑰');
+        return;
+      }
+      est = await tr.estimateBatch(todo);
     } catch (e) {
       p0.done();
       bad(e.message);
@@ -274,10 +276,9 @@ export default async function projectView(root, { id }) {
       return;
     }
 
-    const model = settings.model === 'claude-opus-5' ? 'Opus 5' : 'Sonnet 5';
     const yes = await askConfirm(`翻譯 ${todo.length} 頁？`, {
       detail:
-        `共 ${est.blockCount} 個文字塊，使用 ${model}。\n` +
+        `共 ${est.blockCount} 個文字塊，使用 ${est.model}。\n` +
         `估計花費約 US$${est.cost.toFixed(3)}（輸入約 ${est.input.toLocaleString()} token，` +
         `輸出約 ${est.output.toLocaleString()} token）。\n\n` +
         '這是估算值，實際以 Anthropic 帳單為準。頁面會依序處理，' +
@@ -291,8 +292,7 @@ export default async function projectView(root, { id }) {
     let wake = null;
     try {
       wake = await navigator.wakeLock?.request('screen').catch(() => null);
-      const { translatePages } = await import('../translate/index.js');
-      const res = await translatePages(todo, {
+      const res = await tr.translatePages(todo, {
         bookName: project.name,
         onProgress: (n, total, acc) =>
           p.update(`翻譯中 ${n}/${total}　US$${acc.cost.toFixed(3)}`),

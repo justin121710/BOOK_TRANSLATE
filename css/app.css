@@ -207,6 +207,10 @@ hr {
   margin-bottom: 6px;
 }
 
+.label-note { font-weight: 400; color: var(--ink-faint); }
+
+.field[hidden] { display: none; }
+
 .input-wrap { position: relative; display: flex; }
 
 input[type=text], input[type=password], select, textarea {

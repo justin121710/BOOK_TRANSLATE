@@ -12,6 +12,7 @@ import * as db from '../src/state/db.js';
 import { settings } from '../src/state/settings.js';
 import { buildUserMessage, estimateTokens, estimateCost, NO_TRANSLATE } from '../src/translate/prompt.js';
 import * as glossary from '../src/translate/glossary.js';
+import * as gemini from '../src/api/gemini.js';
 import { translatePage, tailOf } from '../src/translate/index.js';
 
 const out = [];
@@ -29,7 +30,8 @@ let lastRequest = null;
 let cannedTool = null;
 
 window.fetch = async (url, init) => {
-  if (String(url).includes('api.anthropic.com')) {
+  const u = String(url);
+  if (u.includes('api.anthropic.com')) {
     lastRequest = JSON.parse(init.body);
     return new Response(JSON.stringify({
       id: 'msg_test', type: 'message', role: 'assistant',
@@ -38,15 +40,35 @@ window.fetch = async (url, init) => {
       content: [{ type: 'tool_use', id: 'tu_1', name: 'submit_page', input: cannedTool }],
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   }
+  if (u.includes('generativelanguage.googleapis.com')) {
+    lastRequest = init?.body ? JSON.parse(init.body) : { _get: u };
+    if (u.includes('/models?')) {
+      return new Response(JSON.stringify({ models: [
+        { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash',
+          supportedGenerationMethods: ['generateContent'] },
+        { name: 'models/embedding-001', supportedGenerationMethods: ['embedContent'] },
+      ]}), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({
+      candidates: [{
+        finishReason: 'STOP',
+        // 實測 Gemini 即使指定 schema 也偶爾會包圍欄，所以樣本刻意包起來
+        content: { parts: [{ text: '```json\n' + JSON.stringify(cannedTool) + '\n```' }] },
+      }],
+      usageMetadata: { promptTokenCount: 1100, candidatesTokenCount: 380 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   return realFetch(url, init);
 };
 
 /* ---------- 造測試資料 ---------- */
 
 const savedKey = settings.claudeKey;
-// api/claude.js 只檢查有沒有值，所以隨便一個非空字串就夠。
+const savedProviderTop = settings.provider;
+// api 層只檢查有沒有值，所以隨便一個非空字串就夠。
 // 刻意不寫成 sk-ant-… 的樣子，否則會被 tools/check-secrets.mjs 擋下提交。
 settings.claudeKey = 'FAKE-KEY-FOR-LOCAL-TEST-ONLY';
+settings.provider = 'claude';   // 前七項測 Claude 路徑，第八項才切 Gemini
 
 const project = await db.createProject('__翻譯測試__');
 const page = {
@@ -201,11 +223,67 @@ log('\n【7】取上一頁結尾當銜接上下文');
   ok(t.length > 0 && !t.includes('\n'), '取得末段正文且已去換行', JSON.stringify(t));
 }
 
+/* ================= 8. Gemini 供應商 ================= */
+
+log('\n【8】切換到 Gemini');
+{
+  const savedProvider = settings.provider;
+  const savedGKey = settings.geminiKey;
+  settings.provider = 'gemini';
+  settings.geminiKey = 'FAKE-GEMINI-KEY-FOR-LOCAL-TEST';
+  settings.geminiModel = 'gemini-2.5-flash';
+
+  const b = mk({ order: 0, bbox: [10, 10, 100, 300], fontSize: 20, srcText: '猫である' });
+  const p4 = { ...page, id: db.uid('pg_'), index: 11 };
+  await db.put('pages', p4);
+  b.pageId = p4.id;
+  await db.put('blocks', b);
+
+  cannedTool = {
+    blocks: [{ id: b.id, kind: 'body', translation: '是貓' }],
+    glossary: [{ ja: '猫', zh: '貓', note: '一般名詞' }],
+  };
+
+  const r = await translatePage(p4);
+  const [after] = await db.getBy('blocks', 'pageId', p4.id);
+
+  ok(after.dstText === '是貓', 'Gemini 路徑寫入譯文', after.dstText);
+  ok(r.cost > 0, '有依 Gemini 定價回報花費', 'US$' + r.cost.toFixed(6));
+
+  // 送出的請求要走 responseSchema 而不是 Claude 的 tools
+  ok(!lastRequest.tools, '沒有帶 Claude 的 tools 欄位');
+  ok(lastRequest.generationConfig?.responseMimeType === 'application/json',
+     '有要求 JSON 輸出');
+  const schema = lastRequest.generationConfig?.responseSchema;
+  ok(schema?.type === 'OBJECT', 'schema 型別名稱已轉成大寫', schema?.type);
+  ok(schema?.properties?.blocks?.type === 'ARRAY', '巢狀型別也轉成大寫',
+     schema?.properties?.blocks?.type);
+  ok(Array.isArray(schema?.properties?.blocks?.items?.properties?.kind?.enum),
+     'enum 有保留下來');
+  ok(Boolean(lastRequest.system_instruction), '有帶 system_instruction');
+  ok(!/submit_page/.test(lastRequest.system_instruction.parts[0].text),
+     '指令沒有殘留 Claude 的工具名稱');
+
+  // 圍欄包起來的 JSON 也要能解析（實測 Gemini 偶爾會這樣回）
+  ok(after.kind === 'body', '```json 圍欄有被剝掉');
+
+  settings.provider = savedProvider;
+  settings.geminiKey = savedGKey;
+}
+
+log('\n【9】Gemini 模型清單只留支援 generateContent 的');
+{
+  const models = await gemini.listModels();
+  ok(models.length === 1, '過濾掉只支援 embedContent 的模型', String(models.length));
+  ok(models[0].id === 'gemini-2.5-flash', 'models/ 前綴已去掉', models[0].id);
+}
+
 /* ---------- 收尾 ---------- */
 
 await db.deleteProject(project.id);
 for (const id of [page.id]) await db.del('pages', id);
 settings.claudeKey = savedKey;
+settings.provider = savedProviderTop;
 window.fetch = realFetch;
 
 log('\n' + (fails === 0 ? '✅ 全部通過（測試資料已清除）' : `❌ 有 ${fails} 項失敗`));
