@@ -4,10 +4,12 @@ import * as dbmod from './state/db.js';
 
 import home from './views/home.js';
 import project from './views/project.js';
+import page from './views/page.js';
 import settingsView from './views/settings.js';
 
 route('home', home);
 route('project', project);
+route('page', page);
 route('settings', settingsView);
 
 // 未攔截的錯誤在手機上完全看不到，一定要浮出來

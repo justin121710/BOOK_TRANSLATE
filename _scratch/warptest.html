@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>透視校正驗證</title>
+<style>
+  body { background:#fff; color:#111; font:13px system-ui; margin:12px; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start; }
+  figure { margin:0; }
+  figcaption { font-size:12px; margin-bottom:4px; color:#444; }
+  canvas { border:1px solid #bbb; max-width:300px; height:auto; display:block; }
+  pre { background:#f4f4f4; padding:8px; font-size:12px; }
+</style>
+<pre id="log">執行中…</pre>
+<div class="row" id="out"></div>
+<script type="module">
+import { warp, homography, project } from '../src/preprocess/warp.js';
+
+const log = (m) => { document.getElementById('log').textContent += '\n' + m; };
+const show = (canvas, caption) => {
+  const f = document.createElement('figure');
+  const c = document.createElement('figcaption');
+  c.textContent = caption;
+  f.append(c, canvas);
+  document.getElementById('out').append(f);
+};
+
+try {
+  /* 1. 合成一張直排日文書頁 */
+  const W = 800, H = 1120;
+  const src = document.createElement('canvas');
+  src.width = W; src.height = H;
+  const g = src.getContext('2d');
+  g.fillStyle = '#f6f1e6'; g.fillRect(0, 0, W, H);
+
+  // 邊框，用來一眼看出有沒有拉正
+  g.strokeStyle = '#c00'; g.lineWidth = 6;
+  g.strokeRect(3, 3, W - 6, H - 6);
+
+  g.fillStyle = '#1a1a1a';
+  g.font = '30px "Noto Serif TC", "Yu Mincho", serif';
+  const cols = ['吾輩は猫である。名前はまだ無い。', 'どこで生れたかとんと見当がつかぬ。',
+                '何でも薄暗いじめじめした所で', 'ニャーニャー泣いていた事だけは記憶している。'];
+  cols.forEach((text, ci) => {
+    const x = W - 90 - ci * 56;      // 直排：由右往左
+    [...text].forEach((ch, i) => g.fillText(ch, x, 90 + i * 34));
+  });
+  // 四角放標記，校正後應該回到四個角
+  g.fillStyle = '#06c';
+  for (const [x, y] of [[0,0],[W,0],[W,H],[0,H]]) g.fillRect(x-18, y-18, 36, 36);
+  show(src, '1. 原始書頁（合成）');
+
+  /* 2. 模擬手持拍攝：套一個透視變形 */
+  const PW = 760, PH = 1000;
+  const photo = document.createElement('canvas');
+  photo.width = PW; photo.height = PH;
+  const pg = photo.getContext('2d');
+  pg.fillStyle = '#3a3630'; pg.fillRect(0, 0, PW, PH);
+
+  // 書頁在照片裡的四角：右側較遠所以較窄，整體還帶點旋轉
+  const shot = [[95, 70], [640, 150], [690, 930], [55, 860]];
+  const Hf = homography([[0,0],[W,0],[W,H],[0,H]], shot);
+  const grid = 40;
+  for (let j = 0; j < grid; j++) {
+    for (let i = 0; i < grid; i++) {
+      const x0 = i*W/grid, y0 = j*H/grid, x1 = (i+1)*W/grid, y1 = (j+1)*H/grid;
+      const a = project(Hf, x0, y0), b = project(Hf, x1, y0), c = project(Hf, x1, y1), d = project(Hf, x0, y1);
+      pg.save();
+      // 往形心外推，讓相鄰格子重疊，不然合成的照片本身就會布滿接縫
+      const mx = (a[0]+b[0]+c[0]+d[0])/4, my = (a[1]+b[1]+c[1]+d[1])/4;
+      const ex = ([px,py]) => {
+        const dx = px-mx, dy = py-my, L = Math.hypot(dx,dy)||1;
+        return [px + dx/L*0.7, py + dy/L*0.7];
+      };
+      const [ea,eb,ec,ed] = [a,b,c,d].map(ex);
+      pg.beginPath();
+      pg.moveTo(...ea); pg.lineTo(...eb); pg.lineTo(...ec); pg.lineTo(...ed); pg.closePath();
+      pg.clip();
+      const det = (x1-x0)*(y1-y0);
+      const A = (b[0]-a[0])/(x1-x0), Bv = (d[0]-a[0])/(y1-y0);
+      const C = (b[1]-a[1])/(x1-x0), D = (d[1]-a[1])/(y1-y0);
+      pg.setTransform(A, C, Bv, D, a[0]-A*x0-Bv*y0, a[1]-C*x0-D*y0);
+      pg.drawImage(src, 0, 0);
+      pg.restore();
+    }
+  }
+  show(photo, '2. 模擬拍攝（梯形變形）');
+
+  /* 3. 兩種路徑各拉正一次來比較接縫 */
+  const t0 = performance.now();
+  const fixed = warp(photo, shot);
+  const msGL = performance.now() - t0;
+
+  const t1 = performance.now();
+  const mesh = warp(photo, shot, { forceMesh: true });
+  const msMesh = performance.now() - t1;
+
+  show(fixed, `3. WebGL 路徑 ${fixed.width}×${fixed.height}`);
+  show(mesh, `4. 網格法備援 ${mesh.width}×${mesh.height}`);
+  log(`WebGL ${Math.round(msGL)}ms　網格法 ${Math.round(msMesh)}ms`);
+
+  /* 接縫量測：在一段空白紙面上數相鄰像素的跳變次數。
+     接縫會沿著三角形邊界產生規律的暗線，反映成大量小跳變。 */
+  function seamScore(canvas) {
+    const c = canvas.getContext('2d', { willReadFrequently: true });
+    const y0 = Math.round(canvas.height * 0.72);   // 這一帶是空白紙面
+    let spikes = 0, n = 0;
+    for (let y = y0; y < y0 + 40; y++) {
+      const row = c.getImageData(30, y, canvas.width - 60, 1).data;
+      for (let x = 4; x < (canvas.width - 60); x++) {
+        const a = row[x * 4], b = row[(x - 1) * 4];
+        if (Math.abs(a - b) >= 3) spikes++;
+        n++;
+      }
+    }
+    return { pct: (spikes / n * 100).toFixed(2), spikes };
+  }
+  const sGL = seamScore(fixed), sMesh = seamScore(mesh);
+  log(`空白紙面跳變率　WebGL ${sGL.pct}%（${sGL.spikes}）　網格法 ${sMesh.pct}%（${sMesh.spikes}）`);
+  log(Number(sGL.pct) < 0.5 ? '✅ WebGL 路徑無可見接縫' : '⚠️ WebGL 路徑仍有跳變');
+
+  /* 4. 量化檢查：四角的藍色標記應該回到角落 */
+  const fg = fixed.getContext('2d', { willReadFrequently: true });
+  const probe = (x, y) => {
+    const d = fg.getImageData(Math.max(0,Math.min(fixed.width-1,x)), Math.max(0,Math.min(fixed.height-1,y)), 1, 1).data;
+    return [d[0], d[1], d[2]];
+  };
+  const isBlue = ([r,gg,b]) => b > 120 && b > r + 40 && b > gg + 20;
+  const corners = [[8,8], [fixed.width-8,8], [fixed.width-8,fixed.height-8], [8,fixed.height-8]];
+  const hits = corners.map(([x,y]) => isBlue(probe(x,y)));
+  log('四角標記歸位：' + hits.map((h,i)=>`${['左上','右上','右下','左下'][i]}${h?'✓':'✗'}`).join(' '));
+
+  // 中央應該是紙色而不是照片底色
+  const mid = probe(fixed.width>>1, fixed.height>>1);
+  log(`中央取樣 rgb(${mid.join(',')})　${mid[0]>200 && mid[1]>190 ? '✓ 紙面' : '✗ 不是紙面'}`);
+
+  log(hits.every(Boolean) ? '✅ 透視校正正確' : '❌ 校正後四角未歸位');
+} catch (e) {
+  log('❌ ' + e.stack);
+}
+document.title = 'done';
+</script>

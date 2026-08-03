@@ -15,6 +15,11 @@ const SHELL_FILES = [
   './src/ui/router.js',
   './src/ui/toast.js',
   './src/ui/dialog.js',
+  './src/ui/cropper.js',
+  './src/input/pages.js',
+  './src/input/pdfin.js',
+  './src/preprocess/warp.js',
+  './src/preprocess/enhance.js',
   './src/state/db.js',
   './src/state/settings.js',
   './src/api/vision.js',
@@ -22,6 +27,7 @@ const SHELL_FILES = [
   './src/pdf/fonts.js',
   './src/views/home.js',
   './src/views/project.js',
+  './src/views/page.js',
   './src/views/settings.js',
 ];
 

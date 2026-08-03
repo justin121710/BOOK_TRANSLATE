@@ -36,7 +36,7 @@ Service worker 與瀏覽器的模組快取都會讓你改了程式碼卻看到�
 | 里程碑 | 狀態 |
 |---|---|
 | M1 專案骨架、PWA 殼、金鑰管理、IndexedDB | ✅ 完成 |
-| M2 輸入層（相機／相簿／PDF）＋ 透視校正 | ⬜ |
+| M2 輸入層（相機／相簿／PDF）＋ 透視校正 | ✅ 完成 |
 | M3 Google Vision OCR、直排偵測、ruby 剔除 | ⬜ |
 | M4 Claude 翻譯、區塊分類、全書詞彙表 | ⬜ |
 | M5 直排排版引擎 | ⬜ |
@@ -47,6 +47,10 @@ Service worker 與瀏覽器的模組快取都會讓你改了程式碼卻看到�
 M1 附帶已驗證的字型管線（`src/pdf/fonts.js`）：
 16MB 可變 TTF → harfbuzz 子集化 → pdf-lib 嵌入，實測在瀏覽器內
 子集化 253ms、產生 PDF 61ms，直排逐字定位與標點旋轉皆正常。
+
+M2 的透視校正走 WebGL 逐像素反向 homography（`src/preprocess/warp.js`），
+實測空白紙面接縫跳變率 0.00%、校正 20ms。PDF 匯入會自動偵測原生文字層，
+有的話直接取用 glyph 級座標，完全跳過 OCR 也不產生 Vision 費用。
 
 ---
 
@@ -64,13 +68,19 @@ src/
   ui/router.js            hash 路由
   ui/toast.js             浮動提示
   ui/dialog.js            自製對話框（不用 window.prompt/confirm）
+  ui/cropper.js           四角校正編輯器（含放大鏡）
+  input/pages.js          頁面建立與衍生影像
+  input/pdfin.js          PDF 匯入與原生文字層抽取
+  preprocess/warp.js      透視校正（WebGL 為主、網格法備援）
+  preprocess/enhance.js   縮放、去陰影、編碼
   api/vision.js           Google Cloud Vision
   api/claude.js           Anthropic Claude
   pdf/fonts.js            字型下載、快取、harfbuzz 子集化、缺字檢查
-  views/                  home / project / settings
+  views/                  home / project / page / settings
 tools/serve.mjs           開發伺服器
 tools/make-icons.mjs      圖示產生器
 _scratch/pdftest.html     瀏覽器端 PDF 產出驗證頁
+_scratch/warptest.html    透視校正驗證頁（含接縫量測）
 ```
 
 ---

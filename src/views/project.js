@@ -1,27 +1,28 @@
 import { setTitle, go } from '../ui/router.js';
 import { askText, askConfirm } from '../ui/dialog.js';
+import { toast, ok, bad, pending } from '../ui/toast.js';
 import * as db from '../state/db.js';
+import { addImagePage, listPages } from '../input/pages.js';
 
-/* M2 會把這頁換成真正的頁面清單與匯入介面。
-   目前只做到能建立書籍、改名、看到空狀態。 */
+const STATUS = {
+  pending:    { label: '待處理', cls: '' },
+  ocr:        { label: '辨識中', cls: 'busy' },
+  translated: { label: '已翻譯', cls: 'busy' },
+  done:       { label: '完成',   cls: 'ok' },
+  failed:     { label: '失敗',   cls: 'bad' },
+};
 
 export default async function projectView(root, { id }) {
   const project = id && await db.get('projects', id);
-  if (!project) {
-    setTitle('找不到這本書');
-    const p = document.createElement('section');
-    p.className = 'view pad';
-    p.innerHTML = `<h2>找不到這本書</h2>
-      <p class="hint">它可能已經被刪除了。</p>
-      <button class="btn" data-go="home">回到書櫃</button>`;
-    root.append(p);
-    return;
-  }
+  if (!project) return notFound(root);
 
   setTitle(project.name);
 
+  const urls = [];   // 縮圖的 object URL，離開這頁要全部收回
   const sec = document.createElement('section');
   sec.className = 'view pad';
+
+  /* ---------- 標題列 ---------- */
 
   const head = document.createElement('div');
   head.className = 'row-between';
@@ -41,32 +42,190 @@ export default async function projectView(root, { id }) {
   });
   head.append(h, rename);
 
-  const pages = await db.getBy('pages', 'projectId', project.id);
+  /* ---------- 匯入 ---------- */
 
-  const body = document.createElement('div');
-  if (pages.length === 0) {
-    body.innerHTML = `
-      <div class="banner banner-info">
-        還沒有任何頁面。匯入介面（相機、相簿、PDF、EPUB）與透視校正在 M2 實作。
-      </div>`;
-  } else {
-    body.innerHTML = `<p class="hint">${pages.length} 頁</p>`;
+  const bar = document.createElement('div');
+  bar.className = 'row-gap';
+
+  const camera = fileInput('image/*', true, 'camera');
+  const album  = fileInput('image/*', true);
+  const pdfIn  = fileInput('application/pdf,.pdf', false);
+  const epubIn = fileInput('application/epub+zip,.epub', false);
+
+  bar.append(
+    action('📷 拍書頁', () => camera.click()),
+    action('🖼 從相簿', () => album.click()),
+    action('📄 PDF',   () => pdfIn.click()),
+    action('📕 EPUB',  () => epubIn.click()),
+    camera, album, pdfIn, epubIn,
+  );
+
+  camera.addEventListener('change', () => intakeImages(camera, 'camera'));
+  album.addEventListener('change', () => intakeImages(album, 'photo'));
+  pdfIn.addEventListener('change', intakePdf);
+  epubIn.addEventListener('change', intakeEpub);
+
+  /* ---------- 頁面格線 ---------- */
+
+  const grid = document.createElement('div');
+  grid.className = 'page-grid';
+
+  const empty = document.createElement('div');
+  empty.className = 'banner banner-info';
+  empty.textContent =
+    '還沒有任何頁面。拍書頁時盡量把書壓平、讓整頁都入鏡，' +
+    '匯入後可以拖四個角做透視校正。';
+
+  sec.append(head, bar, empty, grid);
+  root.append(sec);
+
+  await paint();
+
+  return { teardown: () => urls.forEach(u => URL.revokeObjectURL(u)) };
+
+  /* ---------- 內部 ---------- */
+
+  function action(label, onClick) {
+    const b = document.createElement('button');
+    b.className = 'btn';
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    return b;
   }
 
-  const del = document.createElement('button');
-  del.className = 'btn btn-danger';
-  del.textContent = '刪除這本書';
-  del.style.marginTop = '24px';
-  del.addEventListener('click', async () => {
-    const yes = await askConfirm(`刪除「${project.name}」？`, {
-      detail: '頁面影像與譯文都會一起消失，無法復原。',
-      okLabel: '刪除', danger: true,
-    });
-    if (!yes) return;
-    await db.deleteProject(project.id);
-    go('home');
-  });
+  function fileInput(accept, multiple, capture) {
+    const i = document.createElement('input');
+    i.type = 'file';
+    i.accept = accept;
+    i.multiple = multiple;
+    if (capture) i.capture = capture;
+    i.hidden = true;
+    return i;
+  }
 
-  sec.append(head, body, del);
-  root.append(sec);
+  async function intakeImages(input, source) {
+    const files = [...input.files];
+    input.value = '';
+    if (!files.length) return;
+
+    const p = pending(`匯入 0/${files.length}`);
+    let done = 0;
+    for (const f of files) {
+      try {
+        await addImagePage(project.id, f, { source });
+      } catch (e) {
+        bad(`${f.name}：${e.message}`);
+      }
+      p.update(`匯入 ${++done}/${files.length}`);
+      await new Promise(r => setTimeout(r, 0));
+    }
+    p.done(`已匯入 ${done} 頁`, 'ok');
+    await db.touchProject(project.id);
+    paint();
+  }
+
+  async function intakePdf() {
+    const file = pdfIn.files?.[0];
+    pdfIn.value = '';
+    if (!file) return;
+
+    const p = pending('開啟 PDF…');
+    try {
+      // pdf.js 有一大包，用到才載
+      const { importPdf, openPdf, probeNativeText } = await import('../input/pdfin.js');
+
+      const doc = await openPdf(file);
+      const probe = await probeNativeText(doc);
+      const total = doc.numPages;
+      doc.destroy();
+      p.done();
+
+      const detail = probe.hasNativeText
+        ? `這份 PDF 有原生文字層（每頁約 ${probe.avgChars} 字），可以直接取用精確座標，不需要 OCR，也不會產生 Vision 費用。`
+        : '這份 PDF 沒有可用的文字層，看起來是掃描件，每一頁都會送 Google Vision 辨識。';
+
+      const yes = await askConfirm(`匯入 ${total} 頁？`, {
+        detail, okLabel: '匯入',
+      });
+      if (!yes) return;
+
+      const q = pending('轉換中 0/' + total);
+      await importPdf(project.id, file, {
+        onProgress: (n, t) => q.update(`轉換中 ${n}/${t}`),
+      });
+      q.done(`已匯入 ${total} 頁`, 'ok');
+      await db.touchProject(project.id);
+      paint();
+    } catch (e) {
+      p.done();
+      bad(e.message);
+    }
+  }
+
+  async function intakeEpub() {
+    epubIn.value = '';
+    await askConfirm('EPUB 匯入尚未實作', {
+      detail:
+        'EPUB 是可重排的 HTML，檔案裡不存在原始頁面座標，' +
+        '所以無法「照原排版還原」。這條路會用統一的書籍版式重新排版成一本乾淨的中譯書，' +
+        '分頁不會和原書一致。這部分排在 M8。',
+      okLabel: '知道了',
+    });
+  }
+
+  async function paint() {
+    urls.splice(0).forEach(u => URL.revokeObjectURL(u));
+
+    const pages = await listPages(project.id);
+    empty.hidden = pages.length > 0;
+    grid.replaceChildren();
+
+    for (const page of pages) {
+      const cell = document.createElement('button');
+      cell.className = 'page-cell';
+      cell.addEventListener('click', () => go('page', { id: page.id }));
+
+      const img = document.createElement('img');
+      const url = URL.createObjectURL(page.procBlob || page.origBlob);
+      urls.push(url);
+      img.src = url;
+      img.alt = `第 ${page.index + 1} 頁`;
+      img.loading = 'lazy';
+
+      const num = document.createElement('span');
+      num.className = 'page-num';
+      num.textContent = page.index + 1;
+
+      const st = STATUS[page.status] || STATUS.pending;
+      const pill = document.createElement('span');
+      pill.className = 'pill ' + st.cls;
+      pill.textContent = st.label;
+
+      const marks = document.createElement('span');
+      marks.className = 'page-marks';
+      if (page.nativeText) marks.append(mark('T', '有原生文字層，不需要 OCR'));
+      if (!page.corners) marks.append(mark('◳', '尚未透視校正'));
+
+      cell.append(img, num, pill, marks);
+      grid.append(cell);
+    }
+  }
+
+  function mark(text, title) {
+    const s = document.createElement('i');
+    s.className = 'page-mark';
+    s.textContent = text;
+    s.title = title;
+    return s;
+  }
+}
+
+function notFound(root) {
+  setTitle('找不到這本書');
+  const p = document.createElement('section');
+  p.className = 'view pad';
+  p.innerHTML = `<h2>找不到這本書</h2>
+    <p class="hint">它可能已經被刪除了。</p>
+    <button class="btn" data-go="home">回到書櫃</button>`;
+  root.append(p);
 }

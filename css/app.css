@@ -274,6 +274,136 @@ input:focus, select:focus, textarea:focus {
 .pill.bad  { color: var(--danger); background: color-mix(in srgb, var(--danger) 15%, transparent); }
 .pill.busy { color: var(--warn);   background: color-mix(in srgb, var(--warn) 15%, transparent); }
 
+/* ---------- 頁面格線 ---------- */
+
+.page-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.page-cell {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  padding: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+  cursor: pointer;
+}
+.page-cell:active { transform: scale(.98); }
+
+.page-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.page-num {
+  position: absolute;
+  top: 6px; left: 6px;
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / .68);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-cell .pill {
+  position: absolute;
+  left: 6px; bottom: 6px;
+  background: rgb(0 0 0 / .68);
+  font-size: 11px;
+}
+
+.page-marks {
+  position: absolute;
+  top: 6px; right: 6px;
+  display: flex;
+  gap: 4px;
+}
+.page-mark {
+  display: grid;
+  place-items: center;
+  width: 20px; height: 20px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / .68);
+  color: var(--accent);
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* ---------- 單頁檢視 ---------- */
+
+.page-view {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 56px);
+}
+
+.page-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  min-height: 0;
+}
+
+.page-full {
+  max-width: 100%;
+  max-height: calc(100dvh - 240px);
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-sunken);
+}
+
+.page-info { text-align: center; margin: 0; }
+
+.page-bar {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  gap: 8px;
+  padding: 10px calc(12px + var(--safe-r)) calc(10px + var(--safe-b)) calc(12px + var(--safe-l));
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line-soft);
+}
+.page-bar .btn { padding: 0 8px; font-size: 14px; }
+
+.page-bar-secondary {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+}
+.page-bar-secondary .btn { flex: 1; }
+
+/* ---------- 四角校正 ---------- */
+
+.cropper {
+  position: relative;
+  width: 100%;
+  height: min(62dvh, 620px);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-sunken);
+  touch-action: none;          /* 不讓瀏覽器把拖曳吃掉去做捲動或縮放 */
+  user-select: none;
+}
+
+.cropper-canvas { display: block; width: 100%; height: 100%; }
+
 /* ---------- dialog ---------- */
 
 .dlg {
