@@ -1,10 +1,15 @@
 import { setTitle, go } from '../ui/router.js';
-import { askConfirm } from '../ui/dialog.js';
+import { askConfirm, askText } from '../ui/dialog.js';
 import { ok, bad, pending } from '../ui/toast.js';
 import * as db from '../state/db.js';
 import { listPages, applyCorners, deletePage, renumber } from '../input/pages.js';
 import { blobToBitmap } from '../preprocess/enhance.js';
 import { cropper } from '../ui/cropper.js';
+
+const KIND_LABEL = {
+  title: '標題', body: '正文', caption: '圖說', note: '註解', quote: '引文',
+  table: '表格', header: '頁眉', footer: '頁尾', pagenum: '頁碼',
+};
 
 export default async function pageView(root, { id }) {
   const page = id && await db.get('pages', id);
@@ -87,18 +92,7 @@ export default async function pageView(root, { id }) {
 
       const list = document.createElement('ol');
       list.className = 'block-list';
-      for (const b of blocks) {
-        const li = document.createElement('li');
-        li.className = 'block-item' + (b.vertical ? ' vertical' : '');
-        const tag = document.createElement('span');
-        tag.className = 'pill';
-        tag.textContent = b.vertical ? '直排' : '橫排';
-        const txt = document.createElement('span');
-        txt.className = 'block-text';
-        txt.textContent = b.srcText.replace(/\n/g, '⏎');
-        li.append(tag, txt);
-        list.append(li);
-      }
+      for (const b of blocks) list.append(blockRow(b));
       stage.append(list);
     }
 
@@ -161,6 +155,86 @@ export default async function pageView(root, { id }) {
         }
       }),
     );
+  }
+
+  /* ---------- 區塊列 ---------- */
+
+  function blockRow(b) {
+    const li = document.createElement('li');
+    li.className = 'block-item' + (b.vertical ? ' vertical' : '');
+
+    const tags = document.createElement('span');
+    tags.className = 'block-tags';
+    tags.append(pill(KIND_LABEL[b.kind] || b.kind, b.kind));
+    if (b.vertical) tags.append(pill('直排', 'vertical'));
+
+    const body = document.createElement('div');
+    body.className = 'block-body';
+
+    const src = document.createElement('p');
+    src.className = 'block-src';
+    src.textContent = b.srcText.replace(/\n/g, '⏎');
+    body.append(src);
+
+    if (b.skipTranslate) {
+      const note = document.createElement('p');
+      note.className = 'block-note';
+      note.textContent = '不翻譯，匯出時從原圖裁切貼回';
+      body.append(note);
+    } else if (b.dstText) {
+      const dst = document.createElement('p');
+      dst.className = 'block-dst';
+      dst.textContent = b.dstText.replace(/\n/g, '⏎');
+      body.append(dst);
+    } else if (b.error) {
+      const err = document.createElement('p');
+      err.className = 'block-note bad';
+      err.textContent = b.error;
+      body.append(err);
+    }
+
+    if (b.dstText != null || b.error) {
+      const again = document.createElement('button');
+      again.className = 'link block-retry';
+      again.textContent = '重跑這一塊';
+      again.addEventListener('click', () => retryBlock(b));
+      body.append(again);
+    }
+
+    li.append(tags, body);
+    return li;
+  }
+
+  function pill(text, kind) {
+    const s = document.createElement('span');
+    s.className = 'pill' + (kind === 'vertical' ? ' vert' : '');
+    s.textContent = text;
+    return s;
+  }
+
+  /**
+   * 單塊重跑。對話框一定要顯示 OCR 讀到的原始日文 ——
+   * 使用者得看得出來是翻錯了，還是 OCR 根本就讀錯。
+   */
+  async function retryBlock(b) {
+    const instruction = await askText('重跑這一塊', {
+      value: '',
+      placeholder: '例如：這是人名／這裡是直排／語氣再口語一點',
+      okLabel: '重跑',
+      hint: `OCR 讀到的原文：\n${b.srcText}\n\n目前譯文：${b.dstText || '（無）'}`,
+    });
+    if (instruction === null) return;
+
+    const p = pending('重跑中…');
+    try {
+      const { retranslateBlock } = await import('../translate/index.js');
+      const r = await retranslateBlock(b, { instruction: instruction.trim() });
+      p.done(`已更新　US$${r.cost.toFixed(4)}`, 'ok');
+      showPreview();
+    } catch (e) {
+      p.done();
+      bad('重跑失敗：' + e.message);
+    }
   }
 
   /* ---------- 動作 ---------- */

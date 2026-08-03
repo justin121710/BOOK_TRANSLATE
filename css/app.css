@@ -405,10 +405,9 @@ input:focus, select:focus, textarea:focus {
 .block-item {
   counter-increment: blk;
   display: grid;
-  grid-template-columns: auto auto 1fr;
-  align-items: baseline;
-  gap: 8px;
-  padding: 8px 10px;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  padding: 10px 12px;
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   background: var(--bg-raised);
@@ -420,15 +419,35 @@ input:focus, select:focus, textarea:focus {
   color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
   text-align: right;
+  line-height: 1.9;
 }
-.block-item .pill { font-size: 11px; padding: 1px 7px; }
-.block-item.vertical .pill { color: #6fb0ff; background: rgb(80 160 255 / .14); }
 
-.block-text {
-  color: var(--ink-dim);
+.block-tags { display: flex; gap: 5px; flex-wrap: wrap; }
+.block-item .pill { font-size: 11px; padding: 1px 7px; }
+.block-item .pill.vert { color: #6fb0ff; background: rgb(80 160 255 / .14); }
+
+.block-body { grid-column: 2; display: grid; gap: 5px; }
+
+.block-src {
+  margin: 0;
+  color: var(--ink-faint);
   word-break: break-all;
-  line-height: 1.5;
+  line-height: 1.55;
 }
+
+.block-dst {
+  margin: 0;
+  padding-left: 9px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--ink);
+  word-break: break-all;
+  line-height: 1.6;
+}
+
+.block-note { margin: 0; font-size: 12px; color: var(--ink-faint); }
+.block-note.bad { color: var(--danger); }
+
+.block-retry { justify-self: start; font-size: 12px; }
 
 /* ---------- 四角校正 ---------- */
 
@@ -469,6 +488,9 @@ input:focus, select:focus, textarea:focus {
   color: var(--ink-dim);
   white-space: pre-line;
 }
+
+/* 重跑對話框要顯示 OCR 原文與現有譯文，換行結構是判讀的依據，不能被摺掉 */
+.dlg .hint { white-space: pre-line; max-height: 40dvh; overflow-y: auto; }
 
 .dlg-actions {
   display: flex;

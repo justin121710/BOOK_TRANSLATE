@@ -96,15 +96,15 @@ Anthropic 沒有 referrer 限制這種東西，所以**唯一的防線是花費�
 http://localhost:5173/*
 ```
 ```
-https://<你的GitHub帳號>.github.io/*
+https://justin121710.github.io/*
 ```
 
 兩個容易踩的細節：
 
-- **結尾的 `/*` 不能省。** 只寫 `https://xxx.github.io` 是不會通過的。
+- **結尾的 `/*` 不能省。** 只寫 `https://justin121710.github.io` 是不會通過的。
 - **不要寫帶路徑的樣式。** 跨網域請求在瀏覽器預設的 `strict-origin-when-cross-origin`
-  政策下只會送出來源網域、不含路徑，所以 Google 收到的是 `https://xxx.github.io/`。
-  寫成 `https://xxx.github.io/BOOK_TRANSLATE/*` 反而匹配不到，請求會被擋。
+  政策下只會送出來源網域、不含路徑，所以 Google 收到的是 `https://justin121710.github.io/`。
+  寫成 `https://justin121710.github.io/BOOK_TRANSLATE/*` 反而匹配不到，請求會被擋。
 
 最後，誠實說一句：referrer 限制擋得住隨手撿到金鑰就拿去用的人，
 擋不住刻意偽造 Referer 標頭的人。它降低風險而不是消除風險，

@@ -73,8 +73,9 @@ export default async function projectView(root, { id }) {
   const runBar = document.createElement('div');
   runBar.className = 'row-gap';
   const ocrBtn = action('🔍 辨識文字', runOcr);
-  ocrBtn.classList.add('btn-primary');
-  runBar.append(ocrBtn);
+  const trBtn = action('🌏 翻譯', runTranslate);
+  trBtn.classList.add('btn-primary');
+  runBar.append(ocrBtn, trBtn);
 
   const grid = document.createElement('div');
   grid.className = 'page-grid';
@@ -237,12 +238,86 @@ export default async function projectView(root, { id }) {
     }
   }
 
+  async function runTranslate() {
+    const pages = await listPages(project.id);
+    const todo = pages.filter(p => p.status === 'ocr' || p.status === 'failed');
+
+    if (!todo.length) {
+      toast(pages.some(p => p.status === 'pending')
+        ? '請先執行「辨識文字」'
+        : '沒有待翻譯的頁面');
+      return;
+    }
+    if (!settings.claudeKey) {
+      bad('尚未設定 Anthropic 金鑰');
+      return;
+    }
+
+    const p0 = pending('估算費用…');
+    let est;
+    try {
+      const { estimateBatch } = await import('../translate/index.js');
+      est = await estimateBatch(todo);
+    } catch (e) {
+      p0.done();
+      bad(e.message);
+      return;
+    }
+    p0.done();
+
+    if (!est.blockCount) {
+      toast('這些頁面都已經翻譯過了');
+      return;
+    }
+
+    const model = settings.model === 'claude-opus-5' ? 'Opus 5' : 'Sonnet 5';
+    const yes = await askConfirm(`翻譯 ${todo.length} 頁？`, {
+      detail:
+        `共 ${est.blockCount} 個文字塊，使用 ${model}。\n` +
+        `估計花費約 US$${est.cost.toFixed(3)}（輸入約 ${est.input.toLocaleString()} token，` +
+        `輸出約 ${est.output.toLocaleString()} token）。\n\n` +
+        '這是估算值，實際以 Anthropic 帳單為準。頁面會依序處理，' +
+        '好讓專有名詞的譯法能跨頁累積並保持一致。',
+      okLabel: '開始翻譯',
+    });
+    if (!yes) return;
+
+    trBtn.disabled = true;
+    const p = pending(`翻譯中 0/${todo.length}`);
+    let wake = null;
+    try {
+      wake = await navigator.wakeLock?.request('screen').catch(() => null);
+      const { translatePages } = await import('../translate/index.js');
+      const res = await translatePages(todo, {
+        bookName: project.name,
+        onProgress: (n, total, acc) =>
+          p.update(`翻譯中 ${n}/${total}　US$${acc.cost.toFixed(3)}`),
+      });
+
+      if (res.failed) {
+        p.done(`完成 ${res.done} 頁，失敗 ${res.failed} 頁　US$${res.cost.toFixed(3)}`, 'bad');
+        for (const e of res.errors.slice(0, 3)) bad(`第 ${e.page} 頁：${e.message}`);
+      } else {
+        p.done(`已翻譯 ${res.done} 頁　US$${res.cost.toFixed(3)}`, 'ok');
+      }
+      await db.touchProject(project.id);
+    } catch (e) {
+      p.done();
+      bad('翻譯失敗：' + e.message);
+    } finally {
+      wake?.release?.().catch(() => {});
+      trBtn.disabled = false;
+      paint();
+    }
+  }
+
   async function paint() {
     urls.splice(0).forEach(u => URL.revokeObjectURL(u));
 
     const pages = await listPages(project.id);
     empty.hidden = pages.length > 0;
     ocrBtn.disabled = pages.length === 0;
+    trBtn.disabled = pages.length === 0;
     grid.replaceChildren();
 
     for (const page of pages) {

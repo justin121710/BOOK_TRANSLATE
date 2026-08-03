@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>翻譯流程驗證</title>
+<style>
+  body { background:#fff; color:#111; font:13px/1.6 system-ui; margin:12px; max-width:900px; }
+  pre { background:#f5f5f5; padding:10px; white-space:pre-wrap; font-size:12px; }
+  .pass { color:#0a0; } .fail { color:#c00; font-weight:700; }
+</style>
+<pre id="log"></pre>
+<script type="module">
+import * as db from '../src/state/db.js';
+import { settings } from '../src/state/settings.js';
+import { buildUserMessage, estimateTokens, estimateCost, NO_TRANSLATE } from '../src/translate/prompt.js';
+import * as glossary from '../src/translate/glossary.js';
+import { translatePage, tailOf } from '../src/translate/index.js';
+
+const out = [];
+let fails = 0;
+const log = (s='') => out.push(s);
+const ok = (cond, label, extra='') => {
+  if (!cond) fails++;
+  log(`${cond ? '  ✓' : '  ✗ 失敗'} ${label}${extra ? '  → ' + extra : ''}`);
+};
+
+/* ---------- 攔截 fetch，回傳預錄的 Anthropic 回應 ---------- */
+
+const realFetch = window.fetch;
+let lastRequest = null;
+let cannedTool = null;
+
+window.fetch = async (url, init) => {
+  if (String(url).includes('api.anthropic.com')) {
+    lastRequest = JSON.parse(init.body);
+    return new Response(JSON.stringify({
+      id: 'msg_test', type: 'message', role: 'assistant',
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 1200, output_tokens: 400 },
+      content: [{ type: 'tool_use', id: 'tu_1', name: 'submit_page', input: cannedTool }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  return realFetch(url, init);
+};
+
+/* ---------- 造測試資料 ---------- */
+
+const savedKey = settings.claudeKey;
+// api/claude.js 只檢查有沒有值，所以隨便一個非空字串就夠。
+// 刻意不寫成 sk-ant-… 的樣子，否則會被 tools/check-secrets.mjs 擋下提交。
+settings.claudeKey = 'FAKE-KEY-FOR-LOCAL-TEST-ONLY';
+
+const project = await db.createProject('__翻譯測試__');
+const page = {
+  id: db.uid('pg_'), projectId: project.id, index: 4, status: 'ocr',
+  source: 'camera', origW: 800, origH: 1120, procW: 800, procH: 1120,
+  corners: [[0,0],[800,0],[800,1120],[0,1120]], vertical: true, nativeText: null,
+};
+await db.put('pages', page);
+
+const mk = (o) => ({
+  id: db.uid('bk_'), pageId: page.id, projectId: project.id,
+  vertical: true, dstText: null, skipTranslate: false, kind: 'body',
+  lines: [], poly: null, ...o,
+});
+const bTitle = mk({ order: 0, bbox: [600, 80, 90, 300], fontSize: 44, srcText: '第一章　猫' });
+const bBody  = mk({ order: 1, bbox: [200, 80, 380, 900], fontSize: 30,
+                    srcText: '吾輩は猫である。\n名前はまだ無い。' });
+const bPage  = mk({ order: 2, bbox: [380, 1060, 40, 20], fontSize: 16, vertical: false, srcText: '一二' });
+await db.putMany('blocks', [bTitle, bBody, bPage]);
+
+/* ================= 測試 1：prompt 組裝 ================= */
+
+log('【1】送出的訊息內容');
+{
+  const msg = buildUserMessage([bTitle, bBody], { width: 800, height: 1120 },
+    [{ ja: '吾輩', zh: '我', note: '第一人稱' }],
+    { bookName: 'こころ', pageNo: 5, vertical: true, tail: '前のページのおわり' });
+
+  ok(msg.includes('こころ'), '帶入書名');
+  ok(msg.includes('第 5 頁'), '帶入頁碼');
+  ok(msg.includes('直排（由右往左）'), '帶入排版方向');
+  ok(msg.includes('吾輩 → 我'), '帶入詞彙表');
+  ok(msg.includes('前のページのおわり'), '帶入上一頁結尾');
+  ok(msg.includes(bTitle.id) && msg.includes(bBody.id), '帶入區塊 id');
+  // 座標要正規化：600/800 = 0.750
+  ok(msg.includes('0.750'), '座標已正規化到 0–1', msg.match(/座標 \[[^\]]+\]/)?.[0]);
+}
+
+/* ================= 測試 2：費用估算 ================= */
+
+log('\n【2】費用估算');
+{
+  const t = estimateTokens([bTitle, bBody], []);
+  ok(t.input > 0 && t.output > 0, 'token 估算為正數', `in ${t.input} out ${t.output}`);
+  const opus = estimateCost('claude-opus-5', t);
+  const sonnet = estimateCost('claude-sonnet-5', t);
+  ok(opus > sonnet, 'Opus 估算高於 Sonnet', `${opus.toFixed(5)} vs ${sonnet.toFixed(5)}`);
+}
+
+/* ================= 測試 3：翻譯一頁 ================= */
+
+log('\n【3】翻譯一頁（分類 + 譯文 + 詞彙）');
+{
+  cannedTool = {
+    blocks: [
+      { id: bTitle.id, kind: 'title',   translation: '第一章　貓' },
+      { id: bBody.id,  kind: 'body',    translation: '我是貓。\n還沒有名字。' },
+      { id: bPage.id,  kind: 'pagenum', translation: '一二' },   // 故意給譯文，應被忽略
+    ],
+    glossary: [{ ja: '吾輩', zh: '我', note: '第一人稱' }],
+  };
+
+  const r = await translatePage(page, { bookName: 'こころ' });
+  const after = await db.getBy('blocks', 'pageId', page.id);
+  const byId = Object.fromEntries(after.map(b => [b.id, b]));
+
+  ok(byId[bTitle.id].kind === 'title', '標題被分類為 title', byId[bTitle.id].kind);
+  ok(byId[bTitle.id].dstText === '第一章　貓', '標題譯文寫入', byId[bTitle.id].dstText);
+  ok(byId[bBody.id].dstText === '我是貓。\n還沒有名字。', '正文譯文保留換行結構',
+     JSON.stringify(byId[bBody.id].dstText));
+
+  ok(NO_TRANSLATE.has('pagenum'), 'pagenum 屬於不翻譯類');
+  ok(byId[bPage.id].skipTranslate === true, '頁碼標記為不翻譯');
+  ok(byId[bPage.id].dstText === '', '頁碼譯文被清空（改用裁圖貼回）',
+     JSON.stringify(byId[bPage.id].dstText));
+
+  ok(r.translated === 2, '計入 2 個實際翻譯的區塊', String(r.translated));
+  ok(r.cost > 0, '有回報花費', 'US$' + r.cost.toFixed(5));
+
+  const pg = await db.get('pages', page.id);
+  ok(pg.status === 'translated', '頁面狀態改為 translated', pg.status);
+
+  // 送出的請求要強制走結構化輸出
+  ok(lastRequest.tool_choice?.name === 'submit_page', '有強制呼叫 submit_page 工具');
+  ok(Array.isArray(lastRequest.tools) && lastRequest.tools[0].name === 'submit_page', '有帶 tool schema');
+}
+
+/* ================= 測試 4：詞彙表跨頁一致 ================= */
+
+log('\n【4】詞彙表');
+{
+  const terms = await glossary.load(project.id);
+  ok(terms.length === 1 && terms[0].ja === '吾輩', '新詞已收錄', JSON.stringify(terms[0]));
+
+  // 第二次出現時只加計次，不覆蓋先出現的譯法
+  await glossary.merge(project.id, [{ ja: '吾輩', zh: '在下', note: '改了' }]);
+  const again = await glossary.load(project.id);
+  ok(again.length === 1, '沒有重複建立', String(again.length));
+  ok(again[0].zh === '我', '既有譯法不被後來的頁面覆寫', again[0].zh);
+  ok(again[0].count === 2, '出現次數累加', String(again[0].count));
+}
+
+/* ================= 測試 5：模型漏回傳區塊 ================= */
+
+log('\n【5】模型漏掉某個區塊時不能默默消失');
+{
+  const b = mk({ order: 0, bbox: [10, 10, 50, 50], fontSize: 20, srcText: 'テスト' });
+  const p2 = { ...page, id: db.uid('pg_'), index: 9 };
+  await db.put('pages', p2);
+  b.pageId = p2.id;
+  await db.put('blocks', b);
+
+  cannedTool = { blocks: [], glossary: [] };   // 什麼都沒回
+  await translatePage(p2);
+
+  const [after] = await db.getBy('blocks', 'pageId', p2.id);
+  ok(after.dstText === null, '沒有被填上假譯文', JSON.stringify(after.dstText));
+  ok(Boolean(after.error), '有標記錯誤', after.error);
+  const pg2 = await db.get('pages', p2.id);
+  ok(pg2.status === 'failed', '頁面狀態標為 failed', pg2.status);
+}
+
+/* ================= 測試 6：捏造 id 應被忽略 ================= */
+
+log('\n【6】模型回傳不存在的 id 時不應炸掉');
+{
+  const b = mk({ order: 0, bbox: [10, 10, 50, 50], fontSize: 20, srcText: 'テスト' });
+  const p3 = { ...page, id: db.uid('pg_'), index: 10 };
+  await db.put('pages', p3);
+  b.pageId = p3.id;
+  await db.put('blocks', b);
+
+  cannedTool = {
+    blocks: [
+      { id: 'bk_不存在的東西', kind: 'body', translation: '幽靈' },
+      { id: b.id, kind: 'body', translation: '測試' },
+    ],
+    glossary: [],
+  };
+  let threw = null;
+  try { await translatePage(p3); } catch (e) { threw = e; }
+  ok(!threw, '沒有拋出例外', threw?.message || '');
+  const [after] = await db.getBy('blocks', 'pageId', p3.id);
+  ok(after.dstText === '測試', '真實區塊仍正確寫入', after.dstText);
+}
+
+/* ================= 測試 7：銜接上下文 ================= */
+
+log('\n【7】取上一頁結尾當銜接上下文');
+{
+  const t = await tailOf(page, 50);
+  ok(t.length > 0 && !t.includes('\n'), '取得末段正文且已去換行', JSON.stringify(t));
+}
+
+/* ---------- 收尾 ---------- */
+
+await db.deleteProject(project.id);
+for (const id of [page.id]) await db.del('pages', id);
+settings.claudeKey = savedKey;
+window.fetch = realFetch;
+
+log('\n' + (fails === 0 ? '✅ 全部通過（測試資料已清除）' : `❌ 有 ${fails} 項失敗`));
+const el = document.getElementById('log');
+el.textContent = out.join('\n');
+el.className = fails === 0 ? 'pass' : 'fail';
+document.title = fails === 0 ? 'PASS' : 'FAIL ' + fails;
+</script>

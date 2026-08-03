@@ -54,7 +54,7 @@ http://localhost:5173/*
 之後部署到 GitHub Pages 再加上：
 
 ```
-https://<你的GitHub帳號>.github.io/*
+https://justin121710.github.io/*
 ```
 
 ### API 限制

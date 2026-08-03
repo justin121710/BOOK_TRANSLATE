@@ -38,7 +38,7 @@ Service worker 與瀏覽器的模組快取都會讓你改了程式碼卻看到�
 | M1 專案骨架、PWA 殼、金鑰管理、IndexedDB | ✅ 完成 |
 | M2 輸入層（相機／相簿／PDF）＋ 透視校正 | ✅ 完成 |
 | M3 Google Vision OCR、直排偵測、ruby 剔除 | ✅ 完成 |
-| M4 Claude 翻譯、區塊分類、全書詞彙表 | ⬜ |
+| M4 Claude 翻譯、區塊分類、全書詞彙表 | ✅ 完成 |
 | M5 直排排版引擎 | ⬜ |
 | M6 圖片區偵測、PDF 輸出、字型子集化 | ⬜ |
 | M7 預覽比對、單塊重跑、匯出選項 | ⬜ |
@@ -74,6 +74,9 @@ src/
   ocr/parse.js            Vision 回應 → 文字塊（純函式，可用固定樣本測）
   ocr/native.js           PDF 原生文字層 → 同一種文字塊形狀
   ocr/index.js            單頁與批次辨識、疊圖繪製
+  translate/prompt.js     翻譯指令、結構化輸出 schema、費用估算
+  translate/glossary.js   全書專有名詞對照表
+  translate/index.js      單頁與批次翻譯、單塊重跑
   preprocess/warp.js      透視校正（WebGL 為主、網格法備援）
   preprocess/enhance.js   縮放、去陰影、編碼
   api/vision.js           Google Cloud Vision
@@ -85,6 +88,7 @@ tools/make-icons.mjs      圖示產生器
 _scratch/pdftest.html     瀏覽器端 PDF 產出驗證頁
 _scratch/warptest.html    透視校正驗證頁（含接縫量測）
 _scratch/ocrtest.html     OCR 解析的固定樣本測試（26 項，不花 API 額度）
+_scratch/translatetest.html 翻譯流程測試（攔截 fetch 回傳預錄回應，不花 API 額度）
 ```
 
 ---
