@@ -22,6 +22,8 @@ const SHELL_FILES = [
   './src/ocr/index.js',
   './src/ocr/parse.js',
   './src/ocr/native.js',
+  './src/pdf/export.js',
+  './src/pdf/figures.js',
   './src/render/rules.js',
   './src/render/layout.js',
   './src/render/canvas.js',

@@ -68,6 +68,10 @@ const PATHS = {
     '<path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/>',
 
   plus: '<path d="M12 5v14M5 12h14"/>',
+
+  download:
+    '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+    '<path d="M7 10l5 5 5-5M12 15V3"/>',
 };
 
 /**

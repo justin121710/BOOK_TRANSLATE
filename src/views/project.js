@@ -75,8 +75,9 @@ export default async function projectView(root, { id }) {
   runBar.className = 'row-gap';
   const ocrBtn = action('辨識文字', runOcr, 'scan');
   const trBtn = action('翻譯', runTranslate, 'translate');
-  trBtn.classList.add('btn-primary');
-  runBar.append(ocrBtn, trBtn);
+  const pdfBtn = action('匯出 PDF', runExport, 'download');
+  pdfBtn.classList.add('btn-primary');
+  runBar.append(ocrBtn, trBtn, pdfBtn);
 
   const grid = document.createElement('div');
   grid.className = 'page-grid';
@@ -315,6 +316,102 @@ export default async function projectView(root, { id }) {
     }
   }
 
+  async function runExport() {
+    const pages = await listPages(project.id);
+    const ready = pages.filter(p => p.status === 'translated' || p.status === 'done');
+
+    if (!ready.length) {
+      toast(pages.length ? '還沒有已翻譯的頁面' : '還沒有頁面');
+      return;
+    }
+
+    const withOriginal = await askExportOptions(ready.length);
+    if (withOriginal === null) return;
+
+    pdfBtn.disabled = true;
+    const p = pending('準備匯出…');
+    let wake = null;
+    try {
+      wake = await navigator.wakeLock?.request('screen').catch(() => null);
+      const { exportPdf, download } = await import('../pdf/export.js');
+
+      const { blob, warnings } = await exportPdf(project, ready, {
+        withOriginal,
+        onProgress: (n, total, note) => p.update(`匯出中 ${n}/${total}　${note || ''}`),
+      });
+
+      const name = `${(project.name || '未命名書籍').replace(/[\\/:*?"<>|]/g, '_')}.pdf`;
+      download(blob, name);
+      p.done(`已匯出 ${(blob.size / 1048576).toFixed(1)} MB`, 'ok');
+
+      for (const w of warnings.slice(0, 3)) bad(w.message);
+      if (warnings.length > 3) bad(`另有 ${warnings.length - 3} 項提醒`);
+
+      for (const pg of ready) await db.put('pages', { ...pg, status: 'done' });
+      await db.touchProject(project.id);
+    } catch (e) {
+      p.done();
+      bad('匯出失敗：' + e.message);
+    } finally {
+      wake?.release?.().catch(() => {});
+      pdfBtn.disabled = false;
+      paint();
+    }
+  }
+
+  /** @returns {Promise<boolean|null>} true=附原頁對照，false=純中譯，null=取消 */
+  function askExportOptions(count) {
+    return new Promise(resolve => {
+      const body = document.createElement('div');
+      const label = document.createElement('label');
+      label.className = 'check-row';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      const span = document.createElement('span');
+      span.textContent = '附上原頁掃描對照（奇數頁原文、偶數頁中譯）';
+      label.append(cb, span);
+
+      const hint = document.createElement('p');
+      hint.className = 'hint';
+      hint.textContent = `共 ${count} 頁。勾選對照會讓頁數與檔案大小都變成兩倍。`;
+
+      body.append(label, hint);
+
+      const dlg = document.createElement('dialog');
+      dlg.className = 'dlg';
+      const form = document.createElement('form');
+      form.method = 'dialog';
+      const h = document.createElement('h3');
+      h.className = 'dlg-title';
+      h.textContent = '匯出 PDF';
+      const row = document.createElement('div');
+      row.className = 'dlg-actions';
+
+      let settled = false;
+      const done = v => { if (!settled) { settled = true; resolve(v); } };
+
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'btn';
+      cancel.textContent = '取消';
+      cancel.addEventListener('click', () => { done(null); dlg.close(); });
+
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'btn btn-primary';
+      go.textContent = '匯出';
+      go.addEventListener('click', () => { done(cb.checked); dlg.close(); });
+
+      row.append(cancel, go);
+      form.append(h, body, row);
+      dlg.append(form);
+      document.body.append(dlg);
+      dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
+      dlg.addEventListener('close', () => { done(null); dlg.remove(); });
+      dlg.showModal();
+    });
+  }
+
   async function paint() {
     urls.splice(0).forEach(u => URL.revokeObjectURL(u));
 
@@ -322,6 +419,7 @@ export default async function projectView(root, { id }) {
     empty.hidden = pages.length > 0;
     ocrBtn.disabled = pages.length === 0;
     trBtn.disabled = pages.length === 0;
+    pdfBtn.disabled = !pages.some(p => p.status === 'translated' || p.status === 'done');
     grid.replaceChildren();
 
     for (const page of pages) {

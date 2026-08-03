@@ -9,6 +9,18 @@
 import { placement, segment, breakLines, HALF_WIDTH_IN_VERTICAL } from './rules.js';
 
 /**
+ * 字面框頂端到基線的距離，以字身為單位。
+ *
+ * Glyph 的 y 一律代表「字面框的頂端」。canvas 與 PDF 兩邊都必須用這個常數
+ * 換算到各自的基線，否則預覽和匯出會差幾個像素 —— 那種偏差很難查，
+ * 因為兩邊單獨看都是對的。
+ *
+ * 不能用 canvas 的 textBaseline='top'：它取的是字型 hhea 的 ascender，
+ * Noto CJK 約 1.16 em，和 PDF 的排版基準不一致。
+ */
+export const EM_ASCENT = 0.88;
+
+/**
  * @typedef {object} Glyph
  * @property {string} text   要畫的字（縦中横時是兩個字元）
  * @property {number} x      左上角

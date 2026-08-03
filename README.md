@@ -40,9 +40,15 @@ Service worker 與瀏覽器的模組快取都會讓你改了程式碼卻看到�
 | M3 Google Vision OCR、直排偵測、ruby 剔除 | ✅ 完成 |
 | M4 Claude 翻譯、區塊分類、全書詞彙表 | ✅ 完成 |
 | M5 直排排版引擎 | ✅ 完成（引擎與測試；接進 PDF 在 M6、接進預覽在 M7） |
-| M6 圖片區偵測、PDF 輸出、字型子集化 | ⬜ |
+| M6 圖片區偵測、PDF 輸出、字型子集化 | ✅ 完成 |
 | M7 預覽比對、單塊重跑、匯出選項 | ⬜ |
 | M8 EPUB 獨立路徑 | ⬜ |
+
+### 已知瑕疵
+
+- 直排的連續破折號 `——` 中間會有一道細縫。兩個字元各自旋轉，
+  而破折號的字面寬不滿一個字身，接縫就露出來了。需要把連續的破折號
+  合併成單一繪製單元才能根治。
 
 M1 附帶已驗證的字型管線（`src/pdf/fonts.js`）：
 16MB 可變 TTF → harfbuzz 子集化 → pdf-lib 嵌入，實測在瀏覽器內
@@ -85,6 +91,8 @@ src/
   api/vision.js           Google Cloud Vision
   api/claude.js           Anthropic Claude
   pdf/fonts.js            字型下載、快取、harfbuzz 子集化、缺字檢查
+  pdf/figures.js          圖片區偵測（啟發式，需人工確認）與裁切
+  pdf/export.js           產生成品 PDF
   views/                  home / project / page / settings
 tools/serve.mjs           開發伺服器
 tools/make-icons.mjs      圖示產生器
@@ -93,6 +101,7 @@ _scratch/warptest.html    透視校正驗證頁（含接縫量測）
 _scratch/ocrtest.html     OCR 解析的固定樣本測試（26 項，不花 API 額度）
 _scratch/translatetest.html 翻譯流程測試（攔截 fetch 回傳預錄回應，不花 API 額度）
 _scratch/layouttest.html  直排排版測試（含標點位置的放大視覺檢視）
+_scratch/exporttest.html  端到端匯出測試：造假頁 → 偵測圖片 → 產生 PDF → 讀回驗證
 ```
 
 ---
