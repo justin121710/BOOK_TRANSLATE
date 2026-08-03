@@ -1,5 +1,5 @@
 import { tpl, setTitle, go } from '../ui/router.js';
-import { toast } from '../ui/toast.js';
+import { toast, bad, pending } from '../ui/toast.js';
 import { askText, askConfirm } from '../ui/dialog.js';
 import { icon } from '../ui/icons.js';
 import { hasKeys, missingKeys } from '../state/settings.js';
@@ -25,6 +25,37 @@ export default async function homeView(root) {
     warn.firstChild.textContent =
       `尚未設定 ${missingKeys().join(' 與 ')} 金鑰，無法開始翻譯。`;
   }
+
+  /* ---------- 備份與還原 ---------- */
+
+  const restoreInput = document.createElement('input');
+  restoreInput.type = 'file';
+  restoreInput.accept = '.zip,application/zip';
+  restoreInput.hidden = true;
+  restoreInput.addEventListener('change', async () => {
+    const file = restoreInput.files?.[0];
+    restoreInput.value = '';
+    if (!file) return;
+
+    const p = pending('還原中…');
+    try {
+      const { importProject } = await import('../state/backup.js');
+      const r = await importProject(file);
+      p.done(`已還原「${r.project.name}」共 ${r.pages} 頁`, 'ok');
+      paint();
+    } catch (e) {
+      p.done();
+      bad('還原失敗：' + e.message);
+    }
+  });
+
+  const restoreBtn = document.createElement('button');
+  restoreBtn.className = 'link';
+  restoreBtn.textContent = '從備份還原';
+  restoreBtn.addEventListener('click', () => restoreInput.click());
+
+  const storageNote = root.querySelector('#storageNote');
+  storageNote.append(restoreBtn, restoreInput);
 
   $('newProject').addEventListener('click', async () => {
     const name = await askText('新增書籍', {

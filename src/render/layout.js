@@ -50,6 +50,8 @@ export function layoutVertical(text, box, opts) {
   const paragraphs = String(text).split('\n');
   // 一欄能放幾個字。留 2% 餘裕，免得最後一個字被邊界切到
   const perLine = Math.max(1, Math.floor((box.h * 0.98 + letterGap) / advance));
+  // 中文的段首縮排是兩個全形字，和日文的一字下げ不同
+  const indent = opts.indent ? 2 : 0;
 
   let col = 0;   // 目前在第幾欄，從右邊數過來
 
@@ -57,7 +59,10 @@ export function layoutVertical(text, box, opts) {
     if (!para) { col++; continue; }               // 空行也要佔一欄，段落間距才對
 
     const units = segment(para);
-    const starts = breakLines(units, perLine);
+    // 縮排會吃掉第一欄的可用字數，斷欄要據此計算，否則第一欄會排到框外
+    const starts = indent
+      ? breakLinesWithIndent(units, perLine, indent)
+      : breakLines(units, perLine);
 
     for (let s = 0; s < starts.length; s++) {
       const from = starts[s];
@@ -65,7 +70,8 @@ export function layoutVertical(text, box, opts) {
 
       // 欄從右往左推進
       const cx = box.x + box.w - (col + 1) * colWidth + lineGap / 2;
-      let cy = box.y;
+      // 只有段落的第一欄要縮
+      let cy = box.y + (s === 0 ? indent * advance : 0);
 
       for (let i = from; i < to; i++) {
         const u = units[i];
@@ -115,18 +121,21 @@ export function layoutHorizontal(text, box, opts) {
 
   const paragraphs = String(text).split('\n');
   const perLine = Math.max(1, Math.floor((box.w * 0.98 + letterGap) / advance));
+  const indent = opts.indent ? 2 : 0;
 
   for (const para of paragraphs) {
     if (!para) { row++; continue; }
 
     const units = [...para].map(c => ({ text: c, tate: false }));
-    const starts = breakLines(units, perLine);
+    const starts = indent
+      ? breakLinesWithIndent(units, perLine, indent)
+      : breakLines(units, perLine);
 
     for (let s = 0; s < starts.length; s++) {
       const from = starts[s];
       const to = s + 1 < starts.length ? starts[s + 1] : units.length;
 
-      let cx = box.x;
+      let cx = box.x + (s === 0 ? indent * advance : 0);
       const cy = box.y + row * lineHeight;
 
       for (let i = from; i < to; i++) {
@@ -144,6 +153,19 @@ export function layoutHorizontal(text, box, opts) {
 }
 
 /**
+ * 有段首縮排時的斷行。
+ * 第一行少了 indent 個位置，其餘行照舊；直接套 breakLines 會讓第一行排到框外。
+ */
+function breakLinesWithIndent(units, perLine, indent) {
+  const first = Math.max(1, perLine - indent);
+  if (units.length <= first) return [0];
+
+  // 先切出第一行，剩下的照一般規則切，再把索引平移回來
+  const rest = breakLines(units.slice(first), perLine);
+  return [0, ...rest.map(i => i + first)];
+}
+
+/**
  * 依規格要求：框線固定，字級自動縮放到塞得下為止。
  *
  * 中文字數約為日文的 0.6–0.8 倍，多數情況會有剩餘空間；
@@ -158,8 +180,9 @@ export function fitText(text, box, opts) {
   const vertical = opts.vertical;
   const run = vertical ? layoutVertical : layoutHorizontal;
   const minScale = opts.minScale ?? 0.08;
+  const indent = Boolean(opts.indent);
 
-  const full = run(text, box, { size: opts.size });
+  const full = run(text, box, { size: opts.size, indent });
   if (!full.overflow) {
     return { ...full, size: opts.size, scale: 1 };
   }
@@ -168,7 +191,7 @@ export function fitText(text, box, opts) {
   let lo = minScale, hi = 1, best = null;
   for (let i = 0; i < 18; i++) {
     const mid = (lo + hi) / 2;
-    const r = run(text, box, { size: opts.size * mid });
+    const r = run(text, box, { size: opts.size * mid, indent });
     if (r.overflow) {
       hi = mid;
     } else {
@@ -182,7 +205,7 @@ export function fitText(text, box, opts) {
 
   // 縮到下限還是塞不下：照下限排出來，並如實標記溢出，
   // 讓預覽頁能把這一塊標出來給使用者處理，而不是默默截斷。
-  const floor = run(text, box, { size: opts.size * minScale });
+  const floor = run(text, box, { size: opts.size * minScale, indent });
   return { ...floor, size: opts.size * minScale, scale: minScale, overflow: true };
 }
 

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>備份還原驗證</title>
+<style>
+  body { background:#fff; color:#111; font:13px/1.6 system-ui; margin:12px; }
+  pre { background:#f5f5f5; padding:10px; white-space:pre-wrap; font-size:12px; }
+  .pass { color:#0a0; } .fail { color:#c00; font-weight:700; }
+</style>
+<script type="importmap">
+{"imports":{"jszip":"https://esm.sh/jszip@3.10.1"}}
+</script>
+<pre id="log">執行中…</pre>
+<script type="module">
+import * as db from '../src/state/db.js';
+import { exportProject, importProject, backupName } from '../src/state/backup.js';
+
+const out = [];
+let fails = 0;
+const log = s => out.push(s);
+const ok = (c, label, extra='') => { if (!c) fails++; log(`${c?'  ✓':'  ✗ 失敗'} ${label}${extra?'  → '+extra:''}`); };
+
+let created = [];
+
+try {
+
+/* ---------- 造一本有內容的書 ---------- */
+
+const c = document.createElement('canvas');
+c.width = 400; c.height = 560;
+const g = c.getContext('2d');
+g.fillStyle = '#f0e9dc'; g.fillRect(0,0,400,560);
+g.fillStyle = '#333'; g.font = '28px serif'; g.fillText('テスト', 40, 80);
+const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
+
+const project = await db.createProject('__備份測試__');
+created.push(project.id);
+
+const pageA = {
+  id: db.uid('pg_'), projectId: project.id, index: 0, status: 'translated',
+  source: 'camera', origBlob: blob, origW: 400, origH: 560,
+  procBlob: blob, procW: 400, procH: 560,
+  corners: [[0,0],[400,0],[400,560],[0,560]], vertical: true, nativeText: null,
+};
+const pageB = { ...pageA, id: db.uid('pg_'), index: 1, status: 'ocr' };
+await db.putMany('pages', [pageA, pageB]);
+
+const blocks = [
+  { id: db.uid('bk_'), pageId: pageA.id, projectId: project.id, order: 0, kind: 'body',
+    vertical: true, bbox: [10,10,80,400], fontSize: 24, indent: true,
+    srcText: '吾輩は猫である。', dstText: '我是貓。', skipTranslate: false, lines: [] },
+  { id: db.uid('bk_'), pageId: pageB.id, projectId: project.id, order: 0, kind: 'pagenum',
+    vertical: false, bbox: [180,530,40,20], fontSize: 14, indent: false,
+    srcText: '一二', dstText: '', skipTranslate: true, lines: [] },
+];
+await db.putMany('blocks', blocks);
+await db.put('figures', { id: db.uid('fg_'), pageId: pageA.id, projectId: project.id,
+                          x: 50, y: 200, w: 120, h: 90 });
+await db.put('glossary', { id: db.uid('gl_'), projectId: project.id,
+                           ja: '吾輩', zh: '我', note: '第一人稱', count: 3 });
+
+/* ================= 1. 匯出 ================= */
+
+log('【1】匯出備份');
+const zip = await exportProject(project.id);
+ok(zip.size > 0, 'zip 有產出', `${(zip.size/1024).toFixed(0)}KB`);
+ok(/\.booktr\.zip$/.test(backupName('こころ')), '檔名格式正確', backupName('こころ'));
+
+/* ================= 2. 還原 ================= */
+
+log('\n【2】還原成新的一本書');
+const restored = await importProject(new File([zip], 'b.zip'));
+created.push(restored.project.id);
+
+ok(restored.project.id !== project.id, '還原成新的 id 而非覆蓋原本那本',
+   `${project.id} vs ${restored.project.id}`);
+ok(restored.project.name === '__備份測試__', '書名保留', restored.project.name);
+ok(restored.pages === 2, '兩頁都還原', String(restored.pages));
+
+// 原本那本必須完好無損
+const original = await db.get('projects', project.id);
+ok(Boolean(original), '原本那本沒有被動到');
+const origPages = await db.getBy('pages', 'projectId', project.id);
+ok(origPages.length === 2, '原本的頁面還在', String(origPages.length));
+
+/* ================= 3. 內容比對 ================= */
+
+log('\n【3】還原的內容');
+{
+  const pages = (await db.getBy('pages', 'projectId', restored.project.id))
+    .sort((a,b) => a.index - b.index);
+  ok(pages[0].origBlob instanceof Blob, '影像還原成 Blob');
+  ok(pages[0].origBlob.size > 0, '影像不是空的', `${(pages[0].origBlob.size/1024).toFixed(1)}KB`);
+  ok(pages[0].procW === 400 && pages[0].procH === 560, '尺寸保留',
+     `${pages[0].procW}x${pages[0].procH}`);
+  ok(pages[0].vertical === true, '直排旗標保留');
+  ok(pages[1].status === 'ocr', '每頁各自的狀態保留', pages[1].status);
+  ok(JSON.stringify(pages[0].corners) === JSON.stringify([[0,0],[400,0],[400,560],[0,560]]),
+     '四角座標保留');
+
+  // 影像確實能解碼，不是壞掉的位元組
+  const bmp = await createImageBitmap(pages[0].origBlob);
+  ok(bmp.width === 400 && bmp.height === 560, '影像可解碼且尺寸正確',
+     `${bmp.width}x${bmp.height}`);
+  bmp.close?.();
+
+  const bks = await db.getBy('blocks', 'projectId', restored.project.id);
+  ok(bks.length === 2, '兩個文字塊都在', String(bks.length));
+
+  const body = bks.find(b => b.kind === 'body');
+  ok(body.srcText === '吾輩は猫である。', '原文保留', body.srcText);
+  ok(body.dstText === '我是貓。', '譯文保留', body.dstText);
+  ok(body.indent === true, '段首縮排旗標保留');
+
+  // 文字塊必須掛到還原後的新頁面上，不能還指著舊 id
+  const newPageIds = new Set(pages.map(p => p.id));
+  ok(bks.every(b => newPageIds.has(b.pageId)), '文字塊指向還原後的頁面 id');
+
+  const figs = await db.getBy('figures', 'projectId', restored.project.id);
+  ok(figs.length === 1 && newPageIds.has(figs[0].pageId), '圖片框也重新對應到新頁面');
+
+  const gl = await db.getBy('glossary', 'projectId', restored.project.id);
+  ok(gl.length === 1 && gl[0].zh === '我' && gl[0].count === 3, '詞彙表保留（含出現次數）',
+     JSON.stringify(gl[0]));
+}
+
+/* ================= 4. 壞檔案要有清楚的錯誤 ================= */
+
+log('\n【4】不是備份檔時的錯誤訊息');
+{
+  const JSZip = (await import('jszip')).default;
+  const junk = new JSZip();
+  junk.file('hello.txt', 'not a backup');
+  const junkBlob = await junk.generateAsync({ type: 'blob' });
+
+  let msg = '';
+  try { await importProject(new File([junkBlob], 'x.zip')); }
+  catch (e) { msg = e.message; }
+  ok(/備份檔/.test(msg), '訊息說得出問題在哪', msg);
+}
+
+log('\n' + (fails === 0 ? '✅ 全部通過（測試資料已清除）' : `❌ 有 ${fails} 項失敗`));
+
+} catch (e) {
+  log('\n❌ ' + e.stack);
+  fails++;
+}
+
+for (const id of created) { try { await db.deleteProject(id); } catch {} }
+
+const el = document.getElementById('log');
+el.textContent = out.join('\n');
+el.className = fails === 0 ? 'pass' : 'fail';
+document.title = fails === 0 ? 'PASS' : 'FAIL ' + fails;
+</script>

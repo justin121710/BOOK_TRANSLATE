@@ -83,6 +83,7 @@ export function renderPage(size, blocks, opts = {}) {
     const laid = fitText(b.dstText, box, {
       vertical: b.vertical,
       size: b.fontSize,
+      indent: b.indent,
     });
 
     if (opts.showBoxes) {

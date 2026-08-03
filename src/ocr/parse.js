@@ -109,6 +109,8 @@ function buildBlock(para, { dropRuby, rubyDropped }) {
   const srcText = lines.map(l => l.text).join('\n');
   if (!srcText.trim()) return null;
 
+  const indented = detectIndent(lines, vertical, median);
+
   // 段落外框偶爾會退化成零面積（缺欄位、或 Vision 自己給了空的框）。
   // 那種情況要退回用字的聯集，否則整個區塊會塌成一個點，貼圖與重排都會錯位。
   const paraBox = boxOf(para.boundingBox);
@@ -127,7 +129,28 @@ function buildBlock(para, { dropRuby, rubyDropped }) {
     lines: lines.map(l => ({ text: l.text, bbox: [l.box.x, l.box.y, l.box.w, l.box.h] })),
     kind: 'body',          // M4 會用 Claude 重新分類
     skipTranslate: false,
+    indent: indented,      // 原書段首有縮排，重排時要套中文的兩字縮排
   };
+}
+
+/**
+ * 這一段的段首有沒有縮排？
+ *
+ * 日文書是一字下げ、中文書是兩字下げ，但這裡只需要判斷「有沒有」——
+ * 實際縮多少交給排版層依中文慣例決定。
+ *
+ * 判斷方式是比較各行的起始位置：直排看頂端、橫排看左緣。
+ * 只要有任何一行明顯比最小值晚開始，就當作這一段有縮排。
+ * 用「最小值」當基準而不是第一行，因為 OCR 出來的第一行不一定是段首。
+ */
+function detectIndent(lines, vertical, median) {
+  if (lines.length < 2 || !median) return false;
+
+  const starts = lines.map(l => vertical ? l.box.y : l.box.x);
+  const base = Math.min(...starts);
+  // 至少縮進半個字才算，否則 OCR 的座標誤差會被誤判成縮排
+  const threshold = median * 0.5;
+  return starts.some(s => s - base >= threshold);
 }
 
 /**

@@ -134,6 +134,60 @@ log('\n【6】字級自動縮放，框線固定');
   ok(tiny.glyphs.length > 0, '仍然排出內容而非丟棄', String(tiny.glyphs.length));
 }
 
+/* ================= 6b. 段首縮排 ================= */
+
+log('\n【6b】段首縮排（中文兩字下げ）');
+{
+  const box = { x: 0, y: 0, w: 300, h: 400 };
+  const plain  = layoutVertical('甲乙丙丁戊', box, { size: 20 });
+  const inset  = layoutVertical('甲乙丙丁戊', box, { size: 20, indent: true });
+
+  ok(inset.glyphs[0].y > plain.glyphs[0].y, '第一個字往下推了',
+     `${plain.glyphs[0].y} → ${inset.glyphs[0].y}`);
+  const advance = 20;
+  ok(Math.abs((inset.glyphs[0].y - plain.glyphs[0].y) - advance * 2) < 0.01,
+     '縮排量為兩個字身', String(inset.glyphs[0].y - plain.glyphs[0].y));
+
+  // 只有段落第一欄縮，換欄後要回到頂端
+  const long = layoutVertical('一二三四五六七八九十甲乙丙丁戊己庚辛壬癸', box, { size: 20, indent: true });
+  const cols = new Map();
+  for (const g of long.glyphs) {
+    if (!cols.has(g.x) || g.y < cols.get(g.x)) cols.set(g.x, g.y);
+  }
+  const tops = [...cols.entries()].sort((a, b) => b[0] - a[0]).map(e => e[1]);
+  ok(tops.length >= 2, '有換欄', String(tops.length));
+  ok(tops[1] < tops[0], '第二欄回到頂端，沒有跟著縮', `${tops[0]} vs ${tops[1]}`);
+
+  // 換行後的新段落要各自縮
+  const two = layoutVertical('甲乙丙\n丁戊己', box, { size: 20, indent: true });
+  const byCol = new Map();
+  for (const g of two.glyphs) {
+    if (!byCol.has(g.x) || g.y < byCol.get(g.x)) byCol.set(g.x, g.y);
+  }
+  const paraTops = [...byCol.entries()].sort((a, b) => b[0] - a[0]).map(e => e[1]);
+  ok(paraTops.length === 2 && Math.abs(paraTops[0] - paraTops[1]) < 0.01,
+     '兩個段落各自縮排', JSON.stringify(paraTops));
+
+  // 橫排
+  const h = layoutHorizontal('甲乙丙', box, { size: 20, indent: true });
+  const h0 = layoutHorizontal('甲乙丙', box, { size: 20 });
+  ok(h.glyphs[0].x > h0.glyphs[0].x, '橫排也會縮', `${h0.glyphs[0].x} → ${h.glyphs[0].x}`);
+}
+
+log('\n【6c】縮排會佔掉第一行的位置，不能排到框外');
+{
+  // 一欄放 5 個字（框高要留一點，因為 perLine 有 2% 餘裕：105*0.98/20 = 5.1）；
+  // 縮排 2 之後第一欄只剩 3 個位置
+  const box = { x: 0, y: 0, w: 300, h: 105 };
+  const r = layoutVertical('一二三四五六七八九十', box, { size: 20, indent: true });
+  const firstColX = r.glyphs[0].x;
+  const inFirstCol = r.glyphs.filter(g => Math.abs(g.x - firstColX) < 0.01);
+  ok(inFirstCol.length === 3, '第一欄只排 3 個字', String(inFirstCol.length));
+  const bottom = Math.max(...inFirstCol.map(g => g.y + g.size));
+  ok(bottom <= box.y + box.h + 0.01, '沒有超出框的下緣',
+     `${bottom.toFixed(1)} vs ${box.h}`);
+}
+
 /* ================= 7. 橫排 ================= */
 
 log('\n【7】橫排');

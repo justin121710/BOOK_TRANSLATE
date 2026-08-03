@@ -156,6 +156,13 @@ hr {
 }
 .hint strong { color: var(--ink-dim); }
 
+.storage-note {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.storage-note .link { margin-left: 6px; font-size: 13px; }
+
 /* ---------- buttons ---------- */
 
 .btn {
@@ -461,7 +468,13 @@ input:focus, select:focus, textarea:focus {
 .block-note { margin: 0; font-size: 12px; color: var(--ink-faint); }
 .block-note.bad { color: var(--danger); }
 
-.block-retry { justify-self: start; font-size: 12px; }
+.block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 2px;
+}
+.block-actions .link { font-size: 12px; }
 
 /* ---------- 四角校正 ---------- */
 
@@ -546,6 +559,13 @@ input:focus, select:focus, textarea:focus {
 
 /* 重跑對話框要顯示 OCR 原文與現有譯文，換行結構是判讀的依據，不能被摺掉 */
 .dlg .hint { white-space: pre-line; max-height: 40dvh; overflow-y: auto; }
+
+.dlg textarea {
+  width: 100%;
+  resize: vertical;
+  line-height: 1.6;
+  font-family: inherit;
+}
 
 .check-row {
   display: flex;

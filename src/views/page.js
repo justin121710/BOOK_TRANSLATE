@@ -1,5 +1,5 @@
 import { setTitle, go } from '../ui/router.js';
-import { askConfirm, askText } from '../ui/dialog.js';
+import { askConfirm, askText, askTextarea } from '../ui/dialog.js';
 import { toast, ok, bad, pending } from '../ui/toast.js';
 import * as db from '../state/db.js';
 import { listPages, applyCorners, deletePage, renumber } from '../input/pages.js';
@@ -326,16 +326,76 @@ export default async function pageView(root, { id }) {
       body.append(err);
     }
 
+    const actions = document.createElement('div');
+    actions.className = 'block-actions';
+
+    const editSrc = document.createElement('button');
+    editSrc.className = 'link';
+    editSrc.textContent = '修正原文';
+    editSrc.addEventListener('click', () => editSource(b));
+    actions.append(editSrc);
+
     if (b.dstText != null || b.error) {
       const again = document.createElement('button');
-      again.className = 'link block-retry';
+      again.className = 'link';
       again.textContent = '重跑這一塊';
       again.addEventListener('click', () => retryBlock(b));
-      body.append(again);
+      actions.append(again);
     }
 
+    if (!b.skipTranslate) {
+      const ind = document.createElement('button');
+      ind.className = 'link';
+      ind.textContent = b.indent ? '取消段首縮排' : '設為段首縮排';
+      ind.addEventListener('click', async () => {
+        await db.put('blocks', { ...b, indent: !b.indent });
+        showPreview();
+      });
+      actions.append(ind);
+    }
+
+    body.append(actions);
     li.append(tags, body);
     return li;
+  }
+
+  /**
+   * 修正 OCR 讀錯的原文。
+   * OCR 認錯字的話，翻譯再怎麼重跑都不會對 —— 得先能改原文。
+   */
+  async function editSource(b) {
+    const next = await askTextarea('修正原文', {
+      value: b.srcText,
+      okLabel: '儲存',
+      hint: '這是 OCR 讀到的原文。改完可以選擇要不要立刻重新翻譯。\n' +
+            '換行代表原書的斷行，會影響重排結果，請保留。',
+    });
+    if (next === null || next === b.srcText) return;
+
+    const trimmed = next.trim();
+    if (!trimmed) {
+      const yes = await askConfirm('原文清空了，要刪掉這一塊嗎？', {
+        detail: '空的文字塊不會出現在成品 PDF 裡。',
+        okLabel: '刪除', danger: true,
+      });
+      if (!yes) return;
+      await db.del('blocks', b.id);
+      ok('已刪除這一塊');
+      return showPreview();
+    }
+
+    // 原文變了，舊譯文就過期了，留著只會誤導
+    await db.put('blocks', { ...b, srcText: next, dstText: null, error: null });
+
+    const retranslate = await askConfirm('原文已更新，要立刻重新翻譯嗎？', {
+      detail: '不重新翻譯的話，這一塊在下次執行整本翻譯時會被一併處理。',
+      okLabel: '立刻翻譯',
+    });
+    if (!retranslate) {
+      ok('已儲存');
+      return showPreview();
+    }
+    retryBlock({ ...b, srcText: next, dstText: null });
   }
 
   function pill(text, kind) {

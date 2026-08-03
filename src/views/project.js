@@ -30,6 +30,14 @@ export default async function projectView(root, { id }) {
   head.className = 'row-between';
   const h = document.createElement('h2');
   h.textContent = project.name;
+  const backup = document.createElement('button');
+  backup.className = 'btn';
+  backup.append(icon('download', { size: 17 }));
+  const backupLabel = document.createElement('span');
+  backupLabel.textContent = '備份';
+  backup.append(backupLabel);
+  backup.addEventListener('click', runBackup);
+
   const rename = document.createElement('button');
   rename.className = 'btn';
   rename.textContent = '改名';
@@ -42,7 +50,28 @@ export default async function projectView(root, { id }) {
     setTitle(project.name);
     h.textContent = project.name;
   });
-  head.append(h, rename);
+  const headBtns = document.createElement('div');
+  headBtns.className = 'row-gap';
+  headBtns.style.margin = '0';
+  headBtns.append(backup, rename);
+  head.append(h, headBtns);
+
+  async function runBackup() {
+    const p = pending('打包中…');
+    try {
+      const { exportProject, backupName } = await import('../state/backup.js');
+      const blob = await exportProject(project.id, {
+        onProgress: (n, total, pct) =>
+          p.update(pct != null ? `壓縮中 ${Math.round(pct)}%` : `打包中 ${n}/${total}`),
+      });
+      const { download } = await import('../pdf/export.js');
+      download(blob, backupName(project.name));
+      p.done(`備份完成 ${(blob.size / 1048576).toFixed(1)} MB`, 'ok');
+    } catch (e) {
+      p.done();
+      bad('備份失敗：' + e.message);
+    }
+  }
 
   /* ---------- 匯入 ---------- */
 

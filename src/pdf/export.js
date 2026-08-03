@@ -144,6 +144,7 @@ export async function exportPdf(project, pages, opts = {}) {
         vertical: b.vertical,
         size: b.fontSize,
         minScale: settings.minFontScale,
+        indent: b.indent,
       });
 
       if (laid.overflow) {

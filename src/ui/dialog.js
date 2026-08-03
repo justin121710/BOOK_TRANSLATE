@@ -78,6 +78,44 @@ export function askText(title, { value = '', placeholder = '', hint = '', okLabe
   });
 }
 
+/**
+ * 多行文字編輯。用於修正 OCR 讀錯的原文 —— 那種內容常常有換行，
+ * 單行輸入框改起來很痛苦。
+ * @returns {Promise<string|null>} 取消時為 null
+ */
+export function askTextarea(title, { value = '', hint = '', okLabel = '儲存', rows = 6 } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+
+    const body = document.createElement('div');
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.rows = rows;
+    ta.spellcheck = false;
+    ta.autocapitalize = 'off';
+    body.append(ta);
+
+    if (hint) {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = hint;
+      body.append(p);
+    }
+
+    const dlg = shell({
+      title,
+      body,
+      actions: [
+        { label: '取消', onClick: (d) => { done(null); d.close(); } },
+        { label: okLabel, primary: true, onClick: (d) => { done(ta.value); d.close(); } },
+      ],
+    });
+    dlg.addEventListener('close', () => done(null));
+    setTimeout(() => ta.focus(), 50);
+  });
+}
+
 /** @returns {Promise<boolean>} */
 export function askConfirm(title, { detail = '', okLabel = '確定', danger = false } = {}) {
   return new Promise((resolve) => {
