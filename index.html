@@ -98,8 +98,10 @@
         <button class="reveal" data-reveal="kGemini" aria-label="顯示金鑰"></button>
       </div>
       <p class="hint">
-        留空就沿用上面那把 Google 金鑰。共用的前提是那把金鑰的 API 限制要加上
-        <strong>Generative Language API</strong>，否則會被擋。
+        <strong>通常需要另外一把。</strong>Generative Language API 不支援 HTTP referrer
+        限制，所以無法和設了網站限制的 Vision 金鑰共用——Cloud Console 會擋下這個組合。
+        最快的取得方式是 Google AI Studio，該金鑰的應用程式限制只能選「無」，
+        請改用配額與花費上限保護。留空則沿用上面那把（僅在該金鑰未設網站限制時可行）。
       </p>
 
       <label for="mGemini" style="margin-top:14px">Gemini 模型</label>

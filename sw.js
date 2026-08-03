@@ -17,6 +17,8 @@ const SHELL_FILES = [
   './src/ui/dialog.js',
   './src/ui/cropper.js',
   './src/ui/icons.js',
+  './src/ui/boxeditor.js',
+  './src/ocr/pagenum.js',
   './src/input/pages.js',
   './src/input/pdfin.js',
   './src/ocr/index.js',

@@ -34,9 +34,10 @@ export default function settingsView(root) {
     const isGemini = provider.value === 'gemini';
     $('geminiFields').hidden = !isGemini;
     $('claudeFields').hidden = isGemini;
+    // 兩家在「無法限制來源」這點上是打平的，別把 Gemini 講得比較安全
     $('providerHint').textContent = isGemini
-      ? '和 Cloud Vision 同一個 Google Cloud 專案，可以共用同一把金鑰，也有免費額度。'
-      : '需要另一把 Anthropic 金鑰。品質可能較好，但多一把鑰匙要管、且沒有來源限制機制。';
+      ? '有免費額度，帳號你已經有了。金鑰通常要另外申請一把，且無法設來源限制。'
+      : '品質可能較好。需要另一把 Anthropic 金鑰，同樣無法設來源限制。';
 
     // 資料會流到哪裡取決於選了誰，這句不能寫死
     $('privacyNote').textContent =

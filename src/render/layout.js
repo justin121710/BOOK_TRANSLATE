@@ -6,7 +6,7 @@
  * 座標系與 OCR 一致：原點左上、y 向下。輸出給 pdf-lib 時再翻轉。
  */
 
-import { placement, segment, breakLines, HALF_WIDTH_IN_VERTICAL } from './rules.js';
+import { placement, segment, breakLines, HALF_WIDTH_IN_VERTICAL, RULE_CHARS } from './rules.js';
 
 /**
  * 字面框頂端到基線的距離，以字身為單位。
@@ -69,6 +69,14 @@ export function layoutVertical(text, box, opts) {
 
       for (let i = from; i < to; i++) {
         const u = units[i];
+
+        // 破折號與連接線畫成實心長條，逐字旋轉會在相鄰兩個之間留下細縫
+        if (!u.tate && RULE_CHARS.has(u.text)) {
+          glyphs.push({ text: u.text, x: cx, y: cy, size, rule: true });
+          cy += advance;
+          continue;
+        }
+
         const p = u.tate
           ? { rotate: false, offsetX: 0, offsetY: 0 }
           : placement(u.text);

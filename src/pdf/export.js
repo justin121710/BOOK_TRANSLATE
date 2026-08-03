@@ -17,6 +17,7 @@ import { crop } from './figures.js';
 import { processedBlob } from '../input/pages.js';
 import { blobToBitmap, toBlob } from '../preprocess/enhance.js';
 import { fitText, EM_ASCENT } from '../render/layout.js';
+import { RULE_THICKNESS } from '../render/rules.js';
 
 /** 頁面長邊對應的 PDF 點數。842pt 是 A4 的長邊，印出來大小剛好。 */
 const TARGET_LONG_EDGE = 842;
@@ -177,6 +178,30 @@ export async function exportPdf(project, pages, opts = {}) {
 function drawGlyph(page, font, g, k, pageH) {
   const size = g.size * k;
   const baselineTop = g.y + g.size * EM_ASCENT;   // 影像座標系裡的基線位置
+
+  if (g.rule) {
+    // 破折號畫成實心長條，和預覽那邊一致
+    const t = size * RULE_THICKNESS;
+    page.drawRectangle({
+      x: g.x * k + (size - t) / 2,
+      y: pageH - (g.y + g.size) * k,
+      width: t,
+      height: size,
+      color: rgb(0.1, 0.1, 0.1),
+    });
+    // 再疊一層完全透明的文字：畫面上看不到，但複製貼上與搜尋時破折號還在。
+    // 少了這步，文字層會直接漏掉這個字。
+    try {
+      page.drawText(g.text, {
+        x: g.x * k,
+        y: pageH - baselineTop * k,
+        size, font, opacity: 0,
+      });
+    } catch {
+      // 這個字沒被子集化進去就算了，長條已經畫出來，視覺上不受影響
+    }
+    return;
+  }
 
   if (g.rotate) {
     // 繞字格中心轉 90°。pdf-lib 的 rotate 是繞繪製原點轉，所以原點要自己算好

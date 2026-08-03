@@ -41,14 +41,8 @@ Service worker 與瀏覽器的模組快取都會讓你改了程式碼卻看到�
 | M4 Claude 翻譯、區塊分類、全書詞彙表 | ✅ 完成 |
 | M5 直排排版引擎 | ✅ 完成（引擎與測試；接進 PDF 在 M6、接進預覽在 M7） |
 | M6 圖片區偵測、PDF 輸出、字型子集化 | ✅ 完成 |
-| M7 預覽比對、單塊重跑、匯出選項 | ⬜ |
+| M7 預覽比對、單塊重跑、匯出選項 | ✅ 完成 |
 | M8 EPUB 獨立路徑 | ⬜ |
-
-### 已知瑕疵
-
-- 直排的連續破折號 `——` 中間會有一道細縫。兩個字元各自旋轉，
-  而破折號的字面寬不滿一個字身，接縫就露出來了。需要把連續的破折號
-  合併成單一繪製單元才能根治。
 
 M1 附帶已驗證的字型管線（`src/pdf/fonts.js`）：
 16MB 可變 TTF → harfbuzz 子集化 → pdf-lib 嵌入，實測在瀏覽器內
@@ -75,6 +69,8 @@ src/
   ui/toast.js             浮動提示
   ui/dialog.js            自製對話框（不用 window.prompt/confirm）
   ui/cropper.js           四角校正編輯器（含放大鏡）
+  ui/boxeditor.js         圖片框編輯器（新增、移動、調整、刪除）
+  ocr/pagenum.js          頁碼判定（先於模型的確定性規則）
   input/pages.js          頁面建立與衍生影像
   input/pdfin.js          PDF 匯入與原生文字層抽取
   ocr/parse.js            Vision 回應 → 文字塊（純函式，可用固定樣本測）

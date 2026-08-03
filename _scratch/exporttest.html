@@ -150,6 +150,9 @@ log('\n【4】用 pdf.js 讀回來');
   ok(text.includes('第一章'), '文字層含標題', text.slice(0, 30));
   ok(text.includes('我是貓'), '文字層含內文');
   ok(!text.includes('一二'), '頁碼沒有進文字層（是裁圖貼回的）');
+  // 破折號畫成矩形，但要疊一層透明文字，否則複製貼上會掉字
+  ok(text.includes('——'), '破折號仍在文字層（畫成長條之外另疊透明文字）',
+     JSON.stringify(text.slice(text.indexOf('頭緒'), text.indexOf('頭緒') + 6)));
 
   const rc = document.createElement('canvas');
   const rvp = p1.getViewport({ scale: 1.1 });

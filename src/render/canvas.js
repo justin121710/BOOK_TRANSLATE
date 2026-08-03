@@ -2,6 +2,7 @@
    和 PDF 輸出共用同一份 layout 結果，兩邊才不會長得不一樣。 */
 
 import { fitText, EM_ASCENT } from './layout.js';
+import { RULE_THICKNESS } from './rules.js';
 
 /**
  * @param {CanvasRenderingContext2D} ctx
@@ -20,6 +21,13 @@ export function drawGlyphs(ctx, glyphs, opts = {}) {
   for (const g of glyphs) {
     ctx.font = `${g.size}px ${family}`;
     const baseline = g.y + g.size * EM_ASCENT;
+
+    if (g.rule) {
+      // 實心長條填滿整個字格的高度，相鄰的接起來完全沒有接痕
+      const t = g.size * RULE_THICKNESS;
+      ctx.fillRect(g.x + (g.size - t) / 2, g.y, t, g.size);
+      continue;
+    }
 
     if (g.rotate) {
       // 繞字格中心轉 90°：橫式括號與破折號在直排時要立起來

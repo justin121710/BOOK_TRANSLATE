@@ -32,17 +32,26 @@ node tools/check-secrets.mjs --all
 刪檔案再提交是沒有用的，歷史裡仍然查得到。那種情況唯一正確的處理是
 **立刻去 Console 刪掉那把金鑰、重建一把**，而不是嘗試改寫歷史。
 
-### ② Anthropic 金鑰外流（比 Google 嚴重）
+### ② 翻譯用的金鑰外流（比 Vision 那把嚴重）
 
-兩把鑰匙的風險等級不一樣：
+三把鑰匙的風險等級不一樣：
 
-| | Google Vision | Anthropic Claude |
-|---|---|---|
-| 有無來源限制機制 | **有**（HTTP referrer） | **沒有** |
-| 外流後的可用性 | 只能從你指定的網域用 | 世界任何地方都能直接用 |
-| 單價 | 每 1000 頁約 US$1.5 | 高出一到兩個數量級 |
+| | Google Vision | Google Gemini | Anthropic Claude |
+|---|---|---|---|
+| 有無來源限制機制 | **有**（HTTP referrer） | **沒有** | **沒有** |
+| 外流後的可用性 | 只能從你指定的網域用 | 任何地方都能用 | 任何地方都能用 |
+| 單價 | 每 1000 頁約 US$1.5 | 高出一到兩個數量級 | 高出一到兩個數量級 |
 
-Anthropic 沒有 referrer 限制這種東西，所以**唯一的防線是花費上限與輪替**。
+**Gemini 不能和 Vision 共用同一把金鑰**（除非你放棄 Vision 的網站限制）：
+Generative Language API 不支援 HTTP referrer 限制，Cloud Console 會直接擋下這個組合，
+訊息類似「無法結合目前選取的 API 限制」。所以要分成兩把：
+
+- **Vision 金鑰**：應用程式限制選「網站」，API 限制只勾 Cloud Vision API
+- **Gemini 金鑰**：應用程式限制只能選「無」，API 限制只勾 Generative Language API。
+  最快的取得方式是 [Google AI Studio](https://aistudio.google.com/apikey)
+
+翻譯用的那把（不論 Gemini 或 Claude）都沒有來源限制可用，
+所以**唯一的防線是花費上限與輪替**。
 
 ### ③ 別人拿到你解鎖的手機
 

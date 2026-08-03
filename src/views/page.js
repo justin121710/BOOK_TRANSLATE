@@ -1,6 +1,6 @@
 import { setTitle, go } from '../ui/router.js';
 import { askConfirm, askText } from '../ui/dialog.js';
-import { ok, bad, pending } from '../ui/toast.js';
+import { toast, ok, bad, pending } from '../ui/toast.js';
 import * as db from '../state/db.js';
 import { listPages, applyCorners, deletePage, renumber } from '../input/pages.js';
 import { blobToBitmap } from '../preprocess/enhance.js';
@@ -104,11 +104,144 @@ export default async function pageView(root, { id }) {
 
     const more = document.createElement('div');
     more.className = 'page-bar-secondary';
-    more.append(
-      btn('回到書籍', '', () => go('project', { id: current.projectId })),
-      btn('刪除這一頁', 'btn-danger', removeSelf),
-    );
+    more.append(btn('圖片框', '', showFigures));
+    if (blocks.some(b => b.dstText)) {
+      more.append(btn('排版預覽', '', showLayoutPreview));
+    }
+    more.append(btn('刪除這一頁', 'btn-danger', removeSelf));
     bar.append(more);
+  }
+
+  /* ---------- 圖片框編輯 ---------- */
+
+  async function showFigures() {
+    stage.replaceChildren();
+    bar.replaceChildren();
+
+    const p = pending('載入…');
+    let bitmap, figures, blocks;
+    try {
+      const { processedBlob } = await import('../input/pages.js');
+      bitmap = await blobToBitmap(await processedBlob(current));
+      figures = await db.getBy('figures', 'pageId', current.id);
+      blocks = await db.getBy('blocks', 'pageId', current.id);
+    } catch (e) {
+      p.done(); bad(e.message); return showPreview();
+    }
+    p.done();
+
+    const { boxEditor } = await import('../ui/boxeditor.js');
+    editor = boxEditor(bitmap, figures, {});
+    stage.append(editor.el);
+
+    const tip = document.createElement('p');
+    tip.className = 'hint page-info';
+    tip.textContent =
+      '在空白處拖曳可新增圖片框，點框選取後可拖角落調整。' +
+      '自動偵測一定會有誤判，這裡的人工確認不能省。';
+    stage.append(tip);
+
+    bar.append(
+      btn('取消', '', () => { bitmap.close?.(); showPreview(); }),
+      btn('自動偵測', '', async (e) => {
+        e.target.disabled = true;
+        const q = pending('偵測中…');
+        try {
+          const { detectFigures } = await import('../pdf/figures.js');
+          const found = detectFigures(bitmap, blocks);
+          editor.set(found);
+          q.done(found.length ? `找到 ${found.length} 個候選` : '沒有找到候選區', found.length ? 'ok' : '');
+        } catch (err) {
+          q.done(); bad(err.message);
+        }
+        e.target.disabled = false;
+      }),
+      btn('刪除選取', '', () => {
+        if (!editor.removeSelected()) toast('請先點一個框');
+      }),
+      btn('儲存', 'btn-primary', async (e) => {
+        e.target.disabled = true;
+        try {
+          await db.delBy('figures', 'pageId', current.id);
+          const rows = editor.rects().map(r => ({
+            id: db.uid('fg_'), pageId: current.id, projectId: current.projectId, ...r,
+          }));
+          if (rows.length) await db.putMany('figures', rows);
+          ok(`已儲存 ${rows.length} 個圖片框`);
+          bitmap.close?.();
+          showPreview();
+        } catch (err) {
+          bad('儲存失敗：' + err.message);
+          e.target.disabled = false;
+        }
+      }),
+    );
+  }
+
+  /* ---------- 排版預覽（原頁與重排結果並排） ---------- */
+
+  async function showLayoutPreview() {
+    stage.replaceChildren();
+    bar.replaceChildren();
+
+    const p = pending('排版中…');
+    try {
+      const blocks = (await db.getBy('blocks', 'pageId', current.id))
+        .sort((a, b) => a.order - b.order);
+      const { renderPage } = await import('../render/canvas.js');
+      const { processedBlob } = await import('../input/pages.js');
+
+      const W = current.procW || current.origW;
+      const H = current.procH || current.origH;
+      const scale = Math.min(1, 900 / Math.max(W, H));
+
+      const { canvas, report } = renderPage({ width: W, height: H }, blocks,
+        { scale, showBoxes: true });
+
+      const wrap = document.createElement('div');
+      wrap.className = 'compare';
+
+      const left = document.createElement('figure');
+      left.className = 'compare-cell';
+      const lc = document.createElement('figcaption');
+      lc.textContent = '原頁';
+      const img = document.createElement('img');
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = URL.createObjectURL(await processedBlob(current));
+      img.src = objectUrl;
+      left.append(lc, img);
+
+      const right = document.createElement('figure');
+      right.className = 'compare-cell';
+      const rc = document.createElement('figcaption');
+      rc.textContent = '重排結果';
+      right.append(rc, canvas);
+
+      wrap.append(left, right);
+      stage.append(wrap);
+
+      const bad_ = report.filter(r => r.overflow);
+      const shrunk = report.filter(r => r.scale < 0.999);
+      const info = document.createElement('p');
+      info.className = 'hint page-info';
+      info.textContent = [
+        `${report.length} 個文字塊`,
+        shrunk.length ? `${shrunk.length} 塊縮過字級（最小 ${Math.min(...shrunk.map(r => r.scale)).toFixed(2)}×）` : '沒有縮字',
+        bad_.length ? `${bad_.length} 塊仍然放不下（紅框）` : '沒有溢出',
+      ].join('　·　');
+      stage.append(info);
+      p.done();
+    } catch (e) {
+      p.done();
+      bad('排版失敗：' + e.message);
+      return showPreview();
+    }
+
+    bar.append(
+      btn('返回', '', showPreview),
+      btn('圖片框', '', showFigures),
+      btn('回到書籍', '', () => go('project', { id: current.projectId })),
+    );
   }
 
   /* ---------- 校正模式 ---------- */
