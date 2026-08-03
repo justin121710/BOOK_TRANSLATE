@@ -11,6 +11,7 @@
 <script type="module">
 import { parseVision } from '../src/ocr/parse.js';
 import { parseNative } from '../src/ocr/native.js';
+import { looksLikePageNumber, markPageNumbers } from '../src/ocr/pagenum.js';
 
 const out = [];
 let fails = 0;
@@ -221,6 +222,54 @@ log('\n【7】原生文字層解析（形狀需與 Vision 那條路一致）');
     ok(k in first, `欄位 ${k} 存在`);
   }
   ok(r.blocks.map(b=>b.srcText).join('').includes('第一章'), '文字有帶進來');
+}
+
+/* ================= 8. 頁碼判定 ================= */
+
+log('\n【8】頁碼判定：該抓的要抓到');
+{
+  const P = { width: 800, height: 1120 };
+  const yes = [
+    ['12',        [380, 1060, 40, 25]],
+    ['一二',      [380, 1060, 45, 25]],
+    ['- 34 -',    [360, 1055, 80, 25]],
+    ['第56頁',    [350, 1050, 95, 28]],
+    ['p.7',       [370, 40, 50, 24]],
+    ['８９',      [30, 540, 28, 45]],       // 直排書側邊的頁碼
+  ];
+  for (const [text, bbox] of yes) {
+    ok(looksLikePageNumber({ srcText: text, bbox }, P), `「${text}」判為頁碼`);
+  }
+}
+
+log('\n【8b】頁碼判定：不該誤殺正文');
+{
+  const P = { width: 800, height: 1120 };
+  const no = [
+    ['一九二三年の春',   [600, 100, 60, 700], '含文字的正文'],
+    ['12',               [400, 560, 40, 25],  '頁面正中央的數字（圖號之類）'],
+    ['三人は歩いた',     [380, 1060, 200, 30],'貼著頁緣但是有內容的句子'],
+    ['一二三四五六七八九十百千', [380, 1060, 300, 30], '太長的數字串'],
+    ['、。',             [380, 1060, 40, 25], '只有標點沒有數字'],
+    ['吾輩は猫である',   [600, 90, 60, 900],  '整欄正文'],
+  ];
+  for (const [text, bbox, why] of no) {
+    ok(!looksLikePageNumber({ srcText: text, bbox }, P), `「${text}」不判為頁碼（${why}）`);
+  }
+}
+
+log('\n【8c】markPageNumbers 會標記並清空譯文');
+{
+  const P = { width: 800, height: 1120 };
+  const blocks = [
+    { srcText: '12', bbox: [380, 1060, 40, 25], kind: 'body', skipTranslate: false, dstText: '十二' },
+    { srcText: '吾輩は猫である', bbox: [600, 90, 60, 900], kind: 'body', skipTranslate: false, dstText: null },
+  ];
+  const n = markPageNumbers(blocks, P);
+  ok(n === 1, '只標記一塊', String(n));
+  ok(blocks[0].kind === 'pagenum' && blocks[0].skipTranslate === true, '頁碼被標記');
+  ok(blocks[0].dstText === '', '既有的錯誤譯文被清掉', JSON.stringify(blocks[0].dstText));
+  ok(blocks[1].kind === 'body' && !blocks[1].skipTranslate, '正文不受影響');
 }
 
 /* ---------- 收尾 ---------- */

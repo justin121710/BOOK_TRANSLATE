@@ -8,6 +8,7 @@ import { ocrBlob, processedBlob } from '../input/pages.js';
 import { blobToBase64, blobToBitmap } from '../preprocess/enhance.js';
 import { parseVision } from './parse.js';
 import { parseNative } from './native.js';
+import { markPageNumbers } from './pagenum.js';
 
 /**
  * 辨識一頁並把文字塊寫進資料庫。
@@ -45,6 +46,13 @@ export async function recognisePage(page, opts = {}) {
     if (Math.abs(scale - 1) > 0.001) rescale(parsed.blocks, scale);
   }
 
+  // 頁碼在送進模型之前就先用確定性規則挑掉：模型判斷短數字很容易漏，
+  // 漏掉會把「一二」翻成別的數字，而且還花了錢
+  const pageNums = markPageNumbers(parsed.blocks, {
+    width: page.procW || page.origW,
+    height: page.procH || page.origH,
+  });
+
   await db.delBy('blocks', 'pageId', page.id);
 
   const rows = parsed.blocks.map(b => ({
@@ -63,7 +71,12 @@ export async function recognisePage(page, opts = {}) {
     error: rows.length ? null : '這一頁沒有辨識到任何文字',
   });
 
-  return { blocks: rows, source, cost, vertical: parsed.vertical, rubyDropped: parsed.rubyDropped };
+  return {
+    blocks: rows, source, cost,
+    vertical: parsed.vertical,
+    rubyDropped: parsed.rubyDropped,
+    pageNumbers: pageNums,
+  };
 }
 
 function rescale(blocks, k) {

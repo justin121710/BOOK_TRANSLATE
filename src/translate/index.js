@@ -9,6 +9,7 @@ import {
   GEMINI_SYSTEM, GEMINI_SCHEMA,
 } from './prompt.js';
 import * as glossary from './glossary.js';
+import { markPageNumbers } from '../ocr/pagenum.js';
 
 /**
  * 兩家供應商的差異只在這一層：送出去、拿回結構化結果、回報用量。
@@ -85,13 +86,18 @@ export async function translatePage(page, opts = {}) {
 
   if (!blocks.length) throw new Error('這一頁還沒有辨識出文字，請先執行辨識');
 
+  const width = page.procW || page.origW;
+  const height = page.procH || page.origH;
+
+  /* 再擋一次頁碼。辨識時已經擋過，但這頁可能是在加上這道規則之前就辨識完的，
+     那些舊資料若不處理仍會被送去翻譯。 */
+  const marked = markPageNumbers(blocks, { width, height });
+  if (marked) await db.putMany('blocks', blocks.filter(b => b.kind === 'pagenum'));
+
   const pending = opts.force ? blocks : blocks.filter(b => b.dstText == null && !b.skipTranslate);
   if (!pending.length) return { blocks, translated: 0, cost: 0, usage: null };
 
   const terms = glossary.trim(await glossary.load(page.projectId));
-
-  const width = page.procW || page.origW;
-  const height = page.procH || page.origH;
 
   const userMessage = buildUserMessage(pending, { width, height }, terms, {
     bookName: opts.bookName,
