@@ -100,10 +100,9 @@ export async function applyCorners(page, corners) {
   return next;
 }
 
-/** 校正後的影像；還沒校正過就即時用原圖頂著。 */
+/** 校正後的影像；還沒校正過就即時用原圖頂著。EPUB 那條路沒有影像，回傳 null。 */
 export async function processedBlob(page) {
-  if (page.procBlob) return page.procBlob;
-  return page.origBlob;
+  return page.procBlob || page.origBlob || null;
 }
 
 /** OCR 用的影像：在校正後的基礎上去陰影。不落地儲存，每次即時算。 */

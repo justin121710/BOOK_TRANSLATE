@@ -62,15 +62,29 @@ export default async function pageView(root, { id }) {
       .sort((a, b) => a.order - b.order);
 
     if (objectUrl) URL.revokeObjectURL(objectUrl);
-    objectUrl = URL.createObjectURL(current.procBlob || current.origBlob);
+    objectUrl = null;
 
-    if (blocks.length && showBlocks) {
+    const pageBlob = current.procBlob || current.origBlob;
+    if (!pageBlob) {
+      // EPUB：沒有掃描影像，直接把重排結果畫出來當預覽
+      const { renderPage } = await import('../render/canvas.js');
+      const W = current.procW || current.origW;
+      const H = current.procH || current.origH;
+      const { canvas } = renderPage({ width: W, height: H }, blocks,
+        { scale: Math.min(1, 700 / Math.max(W, H)) });
+      canvas.className = 'page-full';
+      stage.append(canvas);
+    } else {
+      objectUrl = URL.createObjectURL(pageBlob);
+    }
+
+    if (pageBlob && blocks.length && showBlocks) {
       // 疊上辨識結果：框、閱讀順序編號、直排與橫排用不同顏色
       const { renderOverlay } = await import('../ocr/index.js');
       const canvas = await renderOverlay(current, blocks, { scale: 1 });
       canvas.className = 'page-full';
       stage.append(canvas);
-    } else {
+    } else if (pageBlob) {
       const img = document.createElement('img');
       img.className = 'page-full';
       img.src = objectUrl;
@@ -84,11 +98,13 @@ export default async function pageView(root, { id }) {
     stage.append(info);
 
     if (blocks.length) {
-      const toggle = document.createElement('button');
-      toggle.className = 'link';
-      toggle.textContent = showBlocks ? '隱藏辨識框' : '顯示辨識框';
-      toggle.addEventListener('click', () => { showBlocks = !showBlocks; showPreview(); });
-      stage.append(toggle);
+      if (pageBlob) {
+        const toggle = document.createElement('button');
+        toggle.className = 'link';
+        toggle.textContent = showBlocks ? '隱藏辨識框' : '顯示辨識框';
+        toggle.addEventListener('click', () => { showBlocks = !showBlocks; showPreview(); });
+        stage.append(toggle);
+      }
 
       const list = document.createElement('ol');
       list.className = 'block-list';
@@ -96,15 +112,20 @@ export default async function pageView(root, { id }) {
       stage.append(list);
     }
 
+    // EPUB 沒有掃描影像，透視校正與圖片框對它沒有意義
+    const hasImage = Boolean(pageBlob);
+
     bar.append(
       navBtn('‹ 上一頁', pos > 0, () => go('page', { id: siblings[pos - 1].id })),
-      btn(current.corners ? '重新校正' : '透視校正', 'btn-primary', showEditor),
+      hasImage
+        ? btn(current.corners ? '重新校正' : '透視校正', 'btn-primary', showEditor)
+        : btn('回到書籍', 'btn-primary', () => go('project', { id: current.projectId })),
       navBtn('下一頁 ›', pos < siblings.length - 1, () => go('page', { id: siblings[pos + 1].id })),
     );
 
     const more = document.createElement('div');
     more.className = 'page-bar-secondary';
-    more.append(btn('圖片框', '', showFigures));
+    if (hasImage) more.append(btn('圖片框', '', showFigures));
     if (blocks.some(b => b.dstText)) {
       more.append(btn('排版預覽', '', showLayoutPreview));
     }
@@ -201,23 +222,29 @@ export default async function pageView(root, { id }) {
       const wrap = document.createElement('div');
       wrap.className = 'compare';
 
-      const left = document.createElement('figure');
-      left.className = 'compare-cell';
-      const lc = document.createElement('figcaption');
-      lc.textContent = '原頁';
-      const img = document.createElement('img');
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      objectUrl = URL.createObjectURL(await processedBlob(current));
-      img.src = objectUrl;
-      left.append(lc, img);
+      const source = await processedBlob(current);
+      if (source) {
+        const left = document.createElement('figure');
+        left.className = 'compare-cell';
+        const lc = document.createElement('figcaption');
+        lc.textContent = '原頁';
+        const img = document.createElement('img');
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = URL.createObjectURL(source);
+        img.src = objectUrl;
+        left.append(lc, img);
+        wrap.append(left);
+      } else {
+        // EPUB 沒有原頁可比，只顯示重排結果
+        wrap.style.gridTemplateColumns = '1fr';
+      }
 
       const right = document.createElement('figure');
       right.className = 'compare-cell';
       const rc = document.createElement('figcaption');
-      rc.textContent = '重排結果';
+      rc.textContent = source ? '重排結果' : '排版結果';
       right.append(rc, canvas);
-
-      wrap.append(left, right);
+      wrap.append(right);
       stage.append(wrap);
 
       const bad_ = report.filter(r => r.overflow);
@@ -239,7 +266,6 @@ export default async function pageView(root, { id }) {
 
     bar.append(
       btn('返回', '', showPreview),
-      btn('圖片框', '', showFigures),
       btn('回到書籍', '', () => go('project', { id: current.projectId })),
     );
   }

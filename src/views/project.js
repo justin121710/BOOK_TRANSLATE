@@ -207,22 +207,63 @@ export default async function projectView(root, { id }) {
   }
 
   async function intakeEpub() {
+    const file = epubIn.files?.[0];
     epubIn.value = '';
-    await askConfirm('EPUB 匯入尚未實作', {
-      detail:
-        'EPUB 是可重排的 HTML，檔案裡不存在原始頁面座標，' +
-        '所以無法「照原排版還原」。這條路會用統一的書籍版式重新排版成一本乾淨的中譯書，' +
-        '分頁不會和原書一致。這部分排在 M8。',
-      okLabel: '知道了',
-    });
+    if (!file) return;
+
+    const existing = await listPages(project.id);
+    if (existing.length) {
+      bad('這本書已經有頁面了。EPUB 會重新編排整本書，請建立一本新的書再匯入。');
+      return;
+    }
+
+    const p = pending('解析 EPUB…');
+    try {
+      const { parseEpub, summarise } = await import('../input/epubin.js');
+      const book = await parseEpub(file);
+      const s = summarise(book);
+      p.done();
+
+      const yes = await askConfirm(`匯入《${book.title}》？`, {
+        detail:
+          `${s.chapters} 章、${s.paragraphs} 段、約 ${s.chars.toLocaleString()} 字。\n\n` +
+          'EPUB 是可重排的 HTML，檔案裡不存在原始頁面座標，' +
+          '所以無法「照原排版還原」。這條路會用統一的書籍版式重新排成一本乾淨的中譯書，' +
+          '分頁不會和原書一致，也沒有插圖。\n\n' +
+          '振り仮名（ruby 標記）會直接移除。',
+        okLabel: '匯入',
+      });
+      if (!yes) return;
+
+      const q = pending('編排中…');
+      const { buildPages } = await import('../input/epubpage.js');
+      const r = await buildPages(project.id, book);
+
+      if (project.name === '未命名書籍' || !project.name.trim()) {
+        project.name = book.title;
+        await db.put('projects', project);
+        setTitle(project.name);
+        h.textContent = project.name;
+      }
+      await db.touchProject(project.id);
+      q.done(`已編排 ${r.pages} 頁、${r.blocks} 個段落`, 'ok');
+      paint();
+    } catch (e) {
+      p.done();
+      bad('EPUB 解析失敗：' + e.message);
+    }
   }
 
   async function runOcr() {
     const pages = await listPages(project.id);
-    const todo = pages.filter(p => p.status === 'pending' || p.status === 'failed');
+    // EPUB 是純文字，本來就沒有東西要辨識
+    const todo = pages.filter(p =>
+      p.source !== 'epub' && (p.status === 'pending' || p.status === 'failed'));
 
     if (!todo.length) {
-      toast(pages.length ? '所有頁面都已經辨識過了' : '還沒有頁面');
+      toast(pages.some(p => p.source === 'epub') ? 'EPUB 不需要辨識，直接翻譯即可'
+          : pages.length ? '所有頁面都已經辨識過了'
+          : '還沒有頁面');
       return;
     }
     if (!settings.googleKey && todo.some(p => !p.nativeText?.length)) {
@@ -311,8 +352,12 @@ export default async function projectView(root, { id }) {
         `共 ${est.blockCount} 個文字塊，使用 ${est.model}。\n` +
         `估計花費約 US$${est.cost.toFixed(3)}（輸入約 ${est.input.toLocaleString()} token，` +
         `輸出約 ${est.output.toLocaleString()} token）。\n\n` +
-        '這是估算值，實際以 Anthropic 帳單為準。頁面會依序處理，' +
-        '好讓專有名詞的譯法能跨頁累積並保持一致。',
+        '這是估算值，實際以供應商帳單為準。頁面會依序處理，' +
+        '好讓專有名詞的譯法能跨頁累積並保持一致。' +
+        (todo.some(p => p.source === 'epub')
+          ? '\n\n翻譯完成後會依中譯重新分頁：中文比日文短，' +
+            '沿用原文的版面每頁都會留下大片空白。'
+          : ''),
       okLabel: '開始翻譯',
     });
     if (!yes) return;
@@ -332,7 +377,16 @@ export default async function projectView(root, { id }) {
         p.done(`完成 ${res.done} 頁，失敗 ${res.failed} 頁　US$${res.cost.toFixed(3)}`, 'bad');
         for (const e of res.errors.slice(0, 3)) bad(`第 ${e.page} 頁：${e.message}`);
       } else {
-        p.done(`已翻譯 ${res.done} 頁　US$${res.cost.toFixed(3)}`, 'ok');
+        // EPUB 要依中譯重排：用日文原文排出來的版面會留下大片空白
+        if (todo.some(pg => pg.source === 'epub')) {
+          p.update('依中譯重新分頁…');
+          const { repaginate } = await import('../input/epubpage.js');
+          const r = await repaginate(project.id);
+          p.done(r ? `已翻譯並重排為 ${r.pages} 頁　US$${res.cost.toFixed(3)}`
+                   : `已翻譯 ${res.done} 頁　US$${res.cost.toFixed(3)}`, 'ok');
+        } else {
+          p.done(`已翻譯 ${res.done} 頁　US$${res.cost.toFixed(3)}`, 'ok');
+        }
       }
       await db.touchProject(project.id);
     } catch (e) {
@@ -456,12 +510,21 @@ export default async function projectView(root, { id }) {
       cell.className = 'page-cell';
       cell.addEventListener('click', () => go('page', { id: page.id }));
 
-      const img = document.createElement('img');
-      const url = URL.createObjectURL(page.procBlob || page.origBlob);
-      urls.push(url);
-      img.src = url;
-      img.alt = `第 ${page.index + 1} 頁`;
-      img.loading = 'lazy';
+      let img;
+      const blob = page.procBlob || page.origBlob;
+      if (blob) {
+        img = document.createElement('img');
+        const url = URL.createObjectURL(blob);
+        urls.push(url);
+        img.src = url;
+        img.alt = `第 ${page.index + 1} 頁`;
+        img.loading = 'lazy';
+      } else {
+        // EPUB 那條路沒有掃描影像，畫一個純文字的縮圖示意
+        img = document.createElement('div');
+        img.className = 'page-textonly';
+        img.textContent = '文字';
+      }
 
       const num = document.createElement('span');
       num.className = 'page-num';

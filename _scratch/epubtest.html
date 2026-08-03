@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>EPUB 路徑驗證</title>
+<style>
+  body { background:#fff; color:#111; font:13px/1.6 system-ui; margin:12px; }
+  pre { background:#f5f5f5; padding:10px; white-space:pre-wrap; font-size:12px; }
+  .pass { color:#0a0; } .fail { color:#c00; font-weight:700; }
+  canvas { border:1px solid #bbb; margin-top:8px; }
+</style>
+<script type="importmap">
+{"imports":{"jszip":"https://esm.sh/jszip@3.10.1","pdf-lib":"https://esm.sh/pdf-lib@1.17.1","@pdf-lib/fontkit":"https://esm.sh/@pdf-lib/fontkit@1.1.1"}}
+</script>
+<pre id="log">執行中…</pre>
+<div id="out"></div>
+<script type="module">
+import JSZip from 'jszip';
+import * as db from '../src/state/db.js';
+import { parseEpub, summarise } from '../src/input/epubin.js';
+import { buildPages, repaginate, PAGE } from '../src/input/epubpage.js';
+import { renderPage } from '../src/render/canvas.js';
+
+const out = [];
+let fails = 0;
+const log = s => out.push(s);
+const ok = (c, label, extra='') => { if (!c) fails++; log(`${c?'  ✓':'  ✗ 失敗'} ${label}${extra?'  → '+extra:''}`); };
+let created = [];
+
+try {
+
+/* ---------- 造一份 EPUB ---------- */
+
+function makeEpub() {
+  const zip = new JSZip();
+  zip.file('mimetype', 'application/epub+zip');
+  zip.folder('META-INF').file('container.xml',
+    `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+     <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`);
+
+  const oebps = zip.folder('OEBPS');
+  oebps.file('content.opf',
+    `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+      <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <dc:title>吾輩は猫である</dc:title><dc:creator>夏目漱石</dc:creator><dc:language>ja</dc:language>
+      </metadata>
+      <manifest>
+        <item id="c2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+        <item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+        <item id="css" href="s.css" media-type="text/css"/>
+      </manifest>
+      <spine><itemref idref="c1"/><itemref idref="c2"/></spine>
+     </package>`);
+  oebps.file('s.css', 'p{text-indent:1em}');
+
+  // 第一章帶 ruby，應該被剝掉
+  oebps.file('ch1.xhtml',
+    `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>一</title></head><body>
+      <h1>第一章</h1>
+      <p><ruby>吾輩<rt>わがはい</rt></ruby>は猫である。名前はまだ無い。</p>
+      <p>どこで生れたかとんと見当がつかぬ。</p>
+      <blockquote><p>引用の段落です。</p></blockquote>
+      <${'script'}>alert(1)<\/${'script'}>
+     </body></html>`);
+  oebps.file('ch2.xhtml',
+    `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>二</title></head><body>
+      <h1>第二章</h1>
+      <!-- 一頁約 18 欄 × 34 字，要真的跨頁得放到兩千字以上 -->
+      <p>${'長い段落。'.repeat(400)}</p>
+      <p>${'次の段落です。'.repeat(120)}</p>
+      <figcaption>図1 書斎</figcaption>
+     </body></html>`);
+  return zip.generateAsync({ type: 'blob' });
+}
+
+const epubBlob = await makeEpub();
+
+/* ================= 1. 解析 ================= */
+
+log('【1】解析 EPUB');
+const book = await parseEpub(new File([epubBlob], 'test.epub'));
+
+ok(book.title === '吾輩は猫である', '書名取得', book.title);
+ok(book.creator === '夏目漱石', '作者取得', book.creator);
+ok(book.chapters.length === 2, '兩章', String(book.chapters.length));
+
+const ch1 = book.chapters[0];
+ok(ch1.paragraphs[0].kind === 'title', '第一段是標題', ch1.paragraphs[0].kind);
+// spine 的順序和 manifest 相反，必須照 spine
+ok(ch1.paragraphs[0].text === '第一章', '章節順序依 spine 而非 manifest', ch1.paragraphs[0].text);
+
+const body1 = ch1.paragraphs.find(p => p.text.includes('猫である'));
+ok(Boolean(body1), '找得到內文段落');
+ok(!/わがはい/.test(body1.text), 'ruby（振り仮名）已剝除', body1.text);
+ok(/^吾輩は猫である/.test(body1.text), '漢字本體保留', body1.text.slice(0, 12));
+
+ok(!ch1.paragraphs.some(p => /alert/.test(p.text)), 'script 內容沒有混進來');
+ok(ch1.paragraphs.some(p => p.kind === 'quote'), 'blockquote 判為引文');
+// blockquote 裡面還有一個 p，不能被算兩次
+const quoteCount = ch1.paragraphs.filter(p => /引用の段落/.test(p.text)).length;
+ok(quoteCount === 1, '巢狀區塊沒有被重複抓取', String(quoteCount));
+
+ok(book.chapters[1].paragraphs.some(p => p.kind === 'caption'), 'figcaption 判為圖說');
+
+const s = summarise(book);
+ok(s.chapters === 2 && s.paragraphs > 0 && s.chars > 0, '概覽數字合理', JSON.stringify(s));
+
+/* ================= 2. 分頁 ================= */
+
+log('\n【2】建立頁面');
+const project = await db.createProject('__EPUB測試__');
+created.push(project.id);
+
+const built = await buildPages(project.id, book);
+ok(built.pages >= 2, '產出多頁（長段落有換頁）', String(built.pages));
+
+const pages = (await db.getBy('pages', 'projectId', project.id)).sort((a,b)=>a.index-b.index);
+ok(pages.every(p => p.source === 'epub'), '來源標記為 epub');
+ok(pages.every(p => p.origBlob === null), '沒有掃描影像');
+ok(pages.every(p => p.status === 'ocr'), '狀態直接是待翻譯（不需辨識）', pages[0].status);
+ok(pages.every(p => p.procW === PAGE.width && p.procH === PAGE.height), '頁面尺寸統一');
+
+const blocks = await db.getBy('blocks', 'projectId', project.id);
+ok(blocks.every(b => b.vertical), '全部直排');
+ok(blocks.every(b => b.bbox[0] >= 0 && b.bbox[0] + b.bbox[2] <= PAGE.width + 0.5),
+   '所有區塊都在頁面範圍內');
+
+// 同一頁的區塊應該由右往左排
+const first = blocks.filter(b => b.pageId === pages[0].id).sort((a,b)=>a.order-b.order);
+if (first.length >= 2) {
+  ok(first[0].bbox[0] > first[1].bbox[0], '同頁區塊由右往左',
+     `${first[0].bbox[0].toFixed(0)} → ${first[1].bbox[0].toFixed(0)}`);
+}
+
+/* ================= 3. 依中譯重排 ================= */
+
+log('\n【3】翻譯後重新分頁');
+{
+  // 模擬翻譯完成：中文長度約為日文的 0.65 倍
+  const all = await db.getBy('blocks', 'projectId', project.id);
+  for (const b of all) {
+    const n = Math.max(1, Math.round([...b.srcText].length * 0.65));
+    b.dstText = '中'.repeat(n);
+  }
+  await db.putMany('blocks', all);
+
+  const before = (await db.getBy('pages', 'projectId', project.id)).length;
+  const r = await repaginate(project.id);
+  ok(Boolean(r), '有執行重排');
+  ok(r.pages <= before, '中文較短，頁數不會變多', `${before} → ${r.pages}`);
+
+  const after = (await db.getBy('pages', 'projectId', project.id)).sort((a,b)=>a.index-b.index);
+  ok(after.every(p => p.status === 'translated'), '重排後狀態為已翻譯');
+  ok(after.every((p, i) => p.index === i), '頁碼連續沒有空洞');
+
+  const nb = await db.getBy('blocks', 'projectId', project.id);
+  ok(nb.every(b => b.dstText), '每一塊都有譯文');
+  const pageIds = new Set(after.map(p => p.id));
+  ok(nb.every(b => pageIds.has(b.pageId)), '區塊都掛在新的頁面上');
+
+  // 畫一頁出來看
+  const shown = nb.filter(b => b.pageId === after[0].id).sort((a,b)=>a.order-b.order);
+  const { canvas } = renderPage({ width: PAGE.width, height: PAGE.height }, shown,
+    { scale: 0.35, showBoxes: true });
+  document.getElementById('out').append(canvas);
+}
+
+/* ================= 4. 壞檔案 ================= */
+
+log('\n【4】不是 EPUB 時的錯誤訊息');
+{
+  const junk = new JSZip();
+  junk.file('a.txt', 'hi');
+  let msg = '';
+  try { await parseEpub(new File([await junk.generateAsync({type:'blob'})], 'x.epub')); }
+  catch (e) { msg = e.message; }
+  ok(/EPUB/.test(msg), '訊息說得出問題在哪', msg);
+}
+
+log('\n' + (fails === 0 ? '✅ 全部通過（測試資料已清除）' : `❌ 有 ${fails} 項失敗`));
+
+} catch (e) {
+  log('\n❌ ' + e.stack);
+  fails++;
+}
+
+for (const id of created) { try { await db.deleteProject(id); } catch {} }
+
+const el = document.getElementById('log');
+el.textContent = out.join('\n');
+el.className = fails === 0 ? 'pass' : 'fail';
+document.title = fails === 0 ? 'PASS' : 'FAIL ' + fails;
+</script>

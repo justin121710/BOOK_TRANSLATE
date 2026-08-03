@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>全部測試</title>
+<style>
+  body { background:#fff; color:#111; font:14px/1.7 system-ui; margin:16px; max-width:640px; }
+  table { border-collapse:collapse; width:100%; margin-top:10px; }
+  td { padding:7px 10px; border-bottom:1px solid #eee; }
+  td:last-child { text-align:right; font-weight:700; }
+  .pass { color:#0a0; } .fail { color:#c00; } .run { color:#888; }
+  iframe { display:none; }
+  h1 { font-size:17px; margin:0; }
+  #sum { margin-top:14px; font-weight:700; }
+</style>
+<h1>BOOK_TRANSLATE 測試總表</h1>
+<p style="color:#666;font-size:13px;margin:4px 0 0">
+  每一份測試都不會消耗 API 額度：外部呼叫一律以預錄的回應攔截。
+</p>
+<table id="t"></table>
+<div id="sum" class="run">執行中…</div>
+<div id="frames"></div>
+<script type="module">
+const SUITES = [
+  ['ocrtest',       'OCR 解析、直排、ruby、頁碼'],
+  ['layouttest',    '直排排版、標點、禁則、縮排'],
+  ['translatetest', '翻譯流程、詞彙表、Gemini'],
+  ['exporttest',    '圖片偵測、PDF 匯出'],
+  ['backuptest',    '備份與還原'],
+  ['epubtest',      'EPUB 解析與分頁'],
+];
+
+const table = document.getElementById('t');
+const rows = new Map();
+
+for (const [file, label] of SUITES) {
+  const tr = document.createElement('tr');
+  const a = document.createElement('td');
+  a.innerHTML = `<a href="./${file}.html" target="_blank">${file}</a><br>` +
+                `<span style="color:#888;font-size:12px">${label}</span>`;
+  const b = document.createElement('td');
+  b.textContent = '等待';
+  b.className = 'run';
+  tr.append(a, b);
+  table.append(tr);
+  rows.set(file, b);
+}
+
+let failed = 0;
+
+// 一次跑一份：測試會寫 IndexedDB，同時跑會互相干擾
+for (const [file] of SUITES) {
+  const cell = rows.get(file);
+  cell.textContent = '執行中';
+
+  const frame = document.createElement('iframe');
+  frame.src = `./${file}.html?run=${Date.now()}`;
+  document.getElementById('frames').append(frame);
+
+  const title = await new Promise((resolve) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      let t = '';
+      try { t = frame.contentDocument?.title || ''; } catch { /* 還在載入 */ }
+      if (/^(PASS|FAIL)/.test(t)) { clearInterval(timer); resolve(t); }
+      else if (Date.now() - started > 30000) { clearInterval(timer); resolve('TIMEOUT'); }
+    }, 200);
+  });
+
+  cell.textContent = title;
+  cell.className = title === 'PASS' ? 'pass' : 'fail';
+  if (title !== 'PASS') failed++;
+  frame.remove();
+}
+
+const sum = document.getElementById('sum');
+sum.textContent = failed === 0
+  ? `全部 ${SUITES.length} 份測試通過`
+  : `${failed} / ${SUITES.length} 份測試失敗`;
+sum.className = failed === 0 ? 'pass' : 'fail';
+document.title = failed === 0 ? 'ALL PASS' : `FAIL ${failed}`;
+</script>

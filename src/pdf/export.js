@@ -99,10 +99,12 @@ export async function exportPdf(project, pages, opts = {}) {
     const k = TARGET_LONG_EDGE / Math.max(srcW, srcH);   // 影像像素 → PDF 點
     const pw = srcW * k, ph = srcH * k;
 
-    const bitmap = await blobToBitmap(await processedBlob(page));
+    // EPUB 那條路沒有掃描影像，凡是要用到影像的步驟都得先確認它存在
+    const source = await processedBlob(page);
+    const bitmap = source ? await blobToBitmap(source) : null;
 
     // 對照模式：原頁掃描放在譯文頁前面
-    if (opts.withOriginal) {
+    if (opts.withOriginal && bitmap) {
       const orig = pdf.addPage([pw, ph]);
       const jpg = await pdf.embedJpg(await (await toBlob(toCanvas(bitmap), 'image/jpeg', 0.82)).arrayBuffer());
       orig.drawImage(jpg, { x: 0, y: 0, width: pw, height: ph });
@@ -111,7 +113,7 @@ export async function exportPdf(project, pages, opts = {}) {
     const out = pdf.addPage([pw, ph]);
 
     // 插圖：原樣裁切貼回原座標
-    const figures = await db.getBy('figures', 'pageId', page.id);
+    const figures = bitmap ? await db.getBy('figures', 'pageId', page.id) : [];
     for (const f of figures) {
       const c = crop(bitmap, f);
       const jpg = await pdf.embedJpg(await (await toBlob(c, 'image/jpeg', 0.85)).arrayBuffer());
@@ -126,6 +128,7 @@ export async function exportPdf(project, pages, opts = {}) {
     for (const b of blocks) {
       // 頁眉、頁碼、側標不翻譯：從原圖裁下來貼回，保留原樣也避開缺字問題
       if (b.skipTranslate) {
+        if (!bitmap) continue;      // 沒有原圖可裁，只能略過
         const [bx, by, bw, bh] = b.bbox;
         const c = crop(bitmap, { x: bx, y: by, w: bw, h: bh });
         const jpg = await pdf.embedJpg(await (await toBlob(c, 'image/jpeg', 0.9)).arrayBuffer());
@@ -161,7 +164,7 @@ export async function exportPdf(project, pages, opts = {}) {
       }
     }
 
-    bitmap.close?.();
+    bitmap?.close?.();
     // 讓出主執行緒，手機上整份書才不會把介面凍住
     await new Promise(r => setTimeout(r, 0));
   }

@@ -42,7 +42,9 @@ Service worker 與瀏覽器的模組快取都會讓你改了程式碼卻看到�
 | M5 直排排版引擎 | ✅ 完成（引擎與測試；接進 PDF 在 M6、接進預覽在 M7） |
 | M6 圖片區偵測、PDF 輸出、字型子集化 | ✅ 完成 |
 | M7 預覽比對、單塊重跑、匯出選項 | ✅ 完成 |
-| M8 EPUB 獨立路徑 | ⬜ |
+| M8 EPUB 獨立路徑 | ✅ 完成 |
+
+所有里程碑完成。測試總表：`_scratch/runall.html`（6 份、不消耗 API 額度）。
 
 M1 附帶已驗證的字型管線（`src/pdf/fonts.js`）：
 16MB 可變 TTF → harfbuzz 子集化 → pdf-lib 嵌入，實測在瀏覽器內
@@ -73,6 +75,9 @@ src/
   ocr/pagenum.js          頁碼判定（先於模型的確定性規則）
   input/pages.js          頁面建立與衍生影像
   input/pdfin.js          PDF 匯入與原生文字層抽取
+  input/epubin.js         EPUB 解析（章節、段落、剝除 ruby）
+  input/epubpage.js       EPUB 分頁：統一書籍版式，翻譯後依中譯重排
+  state/backup.js         整本書打包成 zip 備份與還原
   ocr/parse.js            Vision 回應 → 文字塊（純函式，可用固定樣本測）
   ocr/native.js           PDF 原生文字層 → 同一種文字塊形狀
   ocr/index.js            單頁與批次辨識、疊圖繪製
@@ -98,6 +103,9 @@ _scratch/ocrtest.html     OCR 解析的固定樣本測試（26 項，不花 API 
 _scratch/translatetest.html 翻譯流程測試（攔截 fetch 回傳預錄回應，不花 API 額度）
 _scratch/layouttest.html  直排排版測試（含標點位置的放大視覺檢視）
 _scratch/exporttest.html  端到端匯出測試：造假頁 → 偵測圖片 → 產生 PDF → 讀回驗證
+_scratch/backuptest.html  備份還原來回一趟的驗證
+_scratch/epubtest.html    EPUB 解析與分頁驗證
+_scratch/runall.html      測試總表，一次跑完全部六份
 ```
 
 ---
