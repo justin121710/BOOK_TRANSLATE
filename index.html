@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>書籍翻譯器</title>
+<meta name="description" content="日文書頁掃描、AI 翻譯、依原排版重建 PDF">
+<meta name="theme-color" content="#16130f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="書籍翻譯">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+<link rel="icon" href="./icons/icon-192.png">
+<link rel="stylesheet" href="./css/app.css">
+<script type="importmap">
+{
+  "imports": {
+    "pdf-lib": "https://esm.sh/pdf-lib@1.17.1",
+    "@pdf-lib/fontkit": "https://esm.sh/@pdf-lib/fontkit@1.1.1",
+    "pdfjs-dist/": "https://esm.sh/pdfjs-dist@4.6.82/",
+    "jszip": "https://esm.sh/jszip@3.10.1"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="app">
+
+  <header id="topbar">
+    <button id="navBack" class="icon-btn" hidden aria-label="返回">‹</button>
+    <h1 id="topTitle">書籍翻譯器</h1>
+    <button id="navSettings" class="icon-btn" aria-label="設定">⚙</button>
+  </header>
+
+  <main id="view" aria-live="polite"></main>
+
+  <div id="toasts" aria-live="assertive"></div>
+
+</div>
+
+<template id="tpl-home">
+  <section class="view pad">
+    <div id="keyWarn" class="banner banner-warn" hidden>
+      尚未設定 API 金鑰，無法開始翻譯。
+      <button class="link" data-go="settings">前往設定</button>
+    </div>
+
+    <div class="row-between">
+      <h2>我的書</h2>
+      <button id="newProject" class="btn btn-primary">新增書籍</button>
+    </div>
+
+    <ul id="projectList" class="card-list"></ul>
+
+    <p id="emptyHint" class="hint" hidden>
+      還沒有任何書。點「新增書籍」開始，之後可以用相機拍書頁、匯入 PDF，或從相簿選照片。
+    </p>
+  </section>
+</template>
+
+<template id="tpl-settings">
+  <section class="view pad">
+    <h2>設定</h2>
+
+    <div class="banner banner-info">
+      兩組金鑰都只存在這支手機的瀏覽器裡，不會上傳到任何伺服器。
+      書頁影像會送往 Google Cloud Vision 辨識，文字會送往 Anthropic 翻譯。
+    </div>
+
+    <div class="field">
+      <label for="kGoogle">Google Cloud Vision API 金鑰</label>
+      <div class="input-wrap">
+        <input id="kGoogle" type="password" autocomplete="off" autocapitalize="off"
+               spellcheck="false" placeholder="AIza…">
+        <button class="reveal" data-reveal="kGoogle" aria-label="顯示">👁</button>
+      </div>
+      <p class="hint">
+        用於 OCR 與版面座標偵測。請到 Google Cloud Console 為這把金鑰加上
+        <strong>HTTP referrer 限制</strong>，只允許本站網域，否則金鑰外流會被盜用。
+      </p>
+      <p class="hint" id="gStat"></p>
+    </div>
+
+    <div class="field">
+      <label for="kClaude">Anthropic (Claude) API 金鑰</label>
+      <div class="input-wrap">
+        <input id="kClaude" type="password" autocomplete="off" autocapitalize="off"
+               spellcheck="false" placeholder="sk-ant-…">
+        <button class="reveal" data-reveal="kClaude" aria-label="顯示">👁</button>
+      </div>
+      <p class="hint">用於翻譯與版面語意判讀。</p>
+      <p class="hint" id="cStat"></p>
+    </div>
+
+    <div class="field">
+      <label for="mClaude">翻譯模型</label>
+      <select id="mClaude">
+        <option value="claude-opus-5">Opus 5 — 品質最好，成本最高</option>
+        <option value="claude-sonnet-5">Sonnet 5 — 品質好，成本低很多</option>
+      </select>
+    </div>
+
+    <div class="row-gap">
+      <button id="testKeys" class="btn">測試金鑰</button>
+      <button id="saveKeys" class="btn btn-primary">儲存</button>
+    </div>
+
+    <hr>
+
+    <h3>字型</h3>
+    <p class="hint">
+      匯出 PDF 需要嵌入繁體中文字型，否則別人的電腦打不開。
+      內文使用思源宋體、標題使用思源黑體，首次下載後會快取在這支手機上。
+    </p>
+    <ul id="fontList" class="card-list compact"></ul>
+    <button id="fetchFonts" class="btn">下載並快取字型</button>
+
+    <hr>
+
+    <h3>儲存空間</h3>
+    <p class="hint" id="quota">計算中…</p>
+    <button id="wipe" class="btn btn-danger">清除所有本機資料</button>
+  </section>
+</template>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

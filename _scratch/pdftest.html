@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>瀏覽器端 PDF 產出驗證</title>
+<style>
+  body { background:#fff; color:#111; font:13px system-ui; margin:12px; }
+  canvas { border:1px solid #bbb; }
+  pre { background:#f4f4f4; padding:8px; font-size:12px; white-space:pre-wrap; }
+  .err { color:#c00; font-weight:600; }
+</style>
+<script type="importmap">
+{"imports":{"pdf-lib":"https://esm.sh/pdf-lib@1.17.1","@pdf-lib/fontkit":"https://esm.sh/@pdf-lib/fontkit@1.1.1"}}
+</script>
+<pre id="log">執行中…</pre>
+<div id="out"></div>
+<script type="module">
+import { PDFDocument, rgb, degrees } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
+import * as pdfjs from 'https://esm.sh/pdfjs-dist@4.6.82/build/pdf.min.mjs';
+import { loadFont, subsetFont } from '../src/pdf/fonts.js';
+
+pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs';
+
+const log = (m) => { document.getElementById('log').textContent += '\n' + m; };
+
+try {
+  const HEAD = '第一章　窗外的雨';
+  const BODY = '他靜靜地推開了門。「你是誰？」少女問道——聲音裡沒有一絲恐懼。';
+  const VERT = '「時光流逝」';
+
+  const t0 = performance.now();
+  const [serifRaw, sansRaw] = await Promise.all([loadFont('serif'), loadFont('sans')]);
+  log(`字型讀取（IndexedDB 快取）${Math.round(performance.now() - t0)}ms`);
+
+  const t1 = performance.now();
+  const serif = await subsetFont(serifRaw, [BODY, VERT]);
+  const sans  = await subsetFont(sansRaw,  [HEAD]);
+  log(`子集化 serif ${(serif.length/1024).toFixed(1)}KB / sans ${(sans.length/1024).toFixed(1)}KB　${Math.round(performance.now() - t1)}ms`);
+
+  const t2 = performance.now();
+  const pdf = await PDFDocument.create();
+  pdf.registerFontkit(fontkit);
+  const fSerif = await pdf.embedFont(serif, { subset: false });
+  const fSans  = await pdf.embedFont(sans,  { subset: false });
+
+  const page = pdf.addPage([420, 300]);
+  page.drawText(HEAD, { x: 28, y: 250, size: 20, font: fSans, color: rgb(0,0,0) });
+  page.drawText(BODY, { x: 28, y: 210, size: 13, font: fSerif, color: rgb(.1,.1,.1) });
+
+  // 直排：逐字往下，括號旋轉 90°
+  let y = 170;
+  for (const ch of VERT) {
+    const rot = '「」（）'.includes(ch);
+    page.drawText(ch, {
+      x: rot ? 390 + 14 : 390, y: rot ? y + 14 : y,
+      size: 14, font: fSerif, rotate: degrees(rot ? -90 : 0),
+    });
+    y -= 16;
+  }
+
+  // 量測 API：排版引擎要靠它算換行與縮放
+  const w = fSerif.widthOfTextAtSize(BODY, 13);
+  const h = fSerif.heightAtSize(13);
+  log(`量測　BODY 寬 ${w.toFixed(1)}pt　行高 ${h.toFixed(1)}pt`);
+
+  const bytes = await pdf.save();
+  log(`產生 PDF ${(bytes.length/1024).toFixed(1)}KB　${Math.round(performance.now() - t2)}ms`);
+
+  // 用 pdf.js 讀回來，確認字型有效
+  const doc = await pdfjs.getDocument({ data: bytes.slice() }).promise;
+  const p1 = await doc.getPage(1);
+  const vp = p1.getViewport({ scale: 1.6 });
+  const c = document.createElement('canvas');
+  c.width = vp.width; c.height = vp.height;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,c.width,c.height);
+  await p1.render({ canvasContext: ctx, viewport: vp }).promise;
+  document.getElementById('out').append(c);
+
+  const txt = await p1.getTextContent();
+  log('文字層：' + txt.items.map(i => i.str).join(''));
+  log('✅ 全部通過');
+} catch (e) {
+  log('❌ ' + e.stack);
+  document.getElementById('log').className = 'err';
+}
+document.title = 'done';
+</script>

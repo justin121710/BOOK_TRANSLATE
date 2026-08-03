@@ -1,0 +1,93 @@
+# 書籍翻譯器 BOOK_TRANSLATE
+
+把日文書頁掃描進來，OCR 出文字與版面座標，用 Claude 翻成繁體中文，
+再依照原書排版（含直排、右→左欄序）重建成一份全新的 PDF。
+
+行動優先的 PWA，用 Safari 開啟後「分享 → 加到主畫面」就會變成 iPhone 上的 App。
+
+完整規格、技術決策與已知衝突請見 **[SPEC.md](SPEC.md)**。
+
+---
+
+## 開發
+
+```bash
+node tools/serve.mjs
+```
+
+開 <http://localhost:5173>。無建置步驟，直接 ES modules。
+
+重新產生 PWA 圖示：
+
+```bash
+node tools/make-icons.mjs
+```
+
+### 開發時的快取陷阱
+
+Service worker 與瀏覽器的模組快取都會讓你改了程式碼卻看到舊版。
+`tools/serve.mjs` 已經送 `cache-control: no-store`，但模組圖仍可能被沿用。
+改完看不到效果時，用帶 query 的網址重新載入，例如 `http://localhost:5173/?v=2`。
+
+---
+
+## 目前進度
+
+| 里程碑 | 狀態 |
+|---|---|
+| M1 專案骨架、PWA 殼、金鑰管理、IndexedDB | ✅ 完成 |
+| M2 輸入層（相機／相簿／PDF）＋ 透視校正 | ⬜ |
+| M3 Google Vision OCR、直排偵測、ruby 剔除 | ⬜ |
+| M4 Claude 翻譯、區塊分類、全書詞彙表 | ⬜ |
+| M5 直排排版引擎 | ⬜ |
+| M6 圖片區偵測、PDF 輸出、字型子集化 | ⬜ |
+| M7 預覽比對、單塊重跑、匯出選項 | ⬜ |
+| M8 EPUB 獨立路徑 | ⬜ |
+
+M1 附帶已驗證的字型管線（`src/pdf/fonts.js`）：
+16MB 可變 TTF → harfbuzz 子集化 → pdf-lib 嵌入，實測在瀏覽器內
+子集化 253ms、產生 PDF 61ms，直排逐字定位與標點旋轉皆正常。
+
+---
+
+## 目錄
+
+```
+index.html                App 殼與 <template> 視圖
+manifest.webmanifest      PWA manifest
+sw.js                     service worker（殼快取；API 一律不快取）
+css/app.css               全部樣式，色彩集中在 :root
+src/
+  main.js                 進入點、路由註冊、全域錯誤處理
+  state/db.js             IndexedDB：頁面、文字塊、圖框、詞彙表、字型
+  state/settings.js       金鑰與偏好（localStorage）
+  ui/router.js            hash 路由
+  ui/toast.js             浮動提示
+  ui/dialog.js            自製對話框（不用 window.prompt/confirm）
+  api/vision.js           Google Cloud Vision
+  api/claude.js           Anthropic Claude
+  pdf/fonts.js            字型下載、快取、harfbuzz 子集化、缺字檢查
+  views/                  home / project / settings
+tools/serve.mjs           開發伺服器
+tools/make-icons.mjs      圖示產生器
+_scratch/pdftest.html     瀏覽器端 PDF 產出驗證頁
+```
+
+---
+
+## 使用前要準備
+
+兩組自帶的 API 金鑰，在 App 的設定頁填入，只存在本機瀏覽器：
+
+1. **Google Cloud Vision** — OCR 與版面座標。
+   請在 Google Cloud Console 為金鑰設定 **HTTP referrer 限制**，只允許本站網域。
+2. **Anthropic Claude** — 翻譯與版面語意判讀。
+
+首次匯出 PDF 前要在設定頁下載中文字型，兩套合計約 17 MB（下載一次後快取）。
+
+---
+
+## 部署
+
+推到 GitHub Pages 即可，沒有建置步驟。本機尚未安裝 `gh` CLI，
+建立 repo 與首次推送需要手動處理。
