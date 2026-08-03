@@ -1,0 +1,175 @@
+/* 把一段譯文排進一個矩形框，產出「每個字要畫在哪、要不要轉」的指令清單。
+ *
+ * 這一層不碰 PDF 也不碰 canvas，只算座標。所以同一份結果可以用 canvas 畫預覽、
+ * 也可以用 pdf-lib 畫成品，兩邊保證長得一樣 —— 預覽跟匯出對不上是最難查的那種 bug。
+ *
+ * 座標系與 OCR 一致：原點左上、y 向下。輸出給 pdf-lib 時再翻轉。
+ */
+
+import { placement, segment, breakLines, HALF_WIDTH_IN_VERTICAL } from './rules.js';
+
+/**
+ * @typedef {object} Glyph
+ * @property {string} text   要畫的字（縦中横時是兩個字元）
+ * @property {number} x      左上角
+ * @property {number} y
+ * @property {number} size   字身大小
+ * @property {boolean} rotate 是否旋轉 90°
+ * @property {boolean} tate  是否為縦中横組
+ */
+
+/**
+ * 直排：從框的右上角開始往下排，一欄滿了往左移一欄。
+ * @param {string} text
+ * @param {{x:number,y:number,w:number,h:number}} box
+ * @param {{size:number, lineGap?:number, letterGap?:number}} opts
+ * @returns {{glyphs: Glyph[], lines: number, overflow: boolean, usedW: number}}
+ */
+export function layoutVertical(text, box, opts) {
+  const size = opts.size;
+  const lineGap = opts.lineGap ?? size * 0.28;    // 欄距
+  const letterGap = opts.letterGap ?? 0;
+  const advance = size + letterGap;
+  const colWidth = size + lineGap;
+
+  const glyphs = [];
+  let maxCols = 0;
+
+  const paragraphs = String(text).split('\n');
+  // 一欄能放幾個字。留 2% 餘裕，免得最後一個字被邊界切到
+  const perLine = Math.max(1, Math.floor((box.h * 0.98 + letterGap) / advance));
+
+  let col = 0;   // 目前在第幾欄，從右邊數過來
+
+  for (const para of paragraphs) {
+    if (!para) { col++; continue; }               // 空行也要佔一欄，段落間距才對
+
+    const units = segment(para);
+    const starts = breakLines(units, perLine);
+
+    for (let s = 0; s < starts.length; s++) {
+      const from = starts[s];
+      const to = s + 1 < starts.length ? starts[s + 1] : units.length;
+
+      // 欄從右往左推進
+      const cx = box.x + box.w - (col + 1) * colWidth + lineGap / 2;
+      let cy = box.y;
+
+      for (let i = from; i < to; i++) {
+        const u = units[i];
+        const p = u.tate
+          ? { rotate: false, offsetX: 0, offsetY: 0 }
+          : placement(u.text);
+
+        glyphs.push({
+          text: u.text,
+          x: cx + p.offsetX * size,
+          y: cy + p.offsetY * size,
+          size,
+          rotate: p.rotate,
+          tate: u.tate,
+        });
+        cy += advance;
+      }
+      col++;
+      maxCols = Math.max(maxCols, col);
+    }
+  }
+
+  const usedW = maxCols * colWidth;
+  return { glyphs, lines: maxCols, overflow: usedW > box.w + 0.5, usedW };
+}
+
+/**
+ * 橫排：從左上角往右排，滿了換行。
+ */
+export function layoutHorizontal(text, box, opts) {
+  const size = opts.size;
+  const lineGap = opts.lineGap ?? size * 0.42;
+  const letterGap = opts.letterGap ?? 0;
+  const advance = size + letterGap;
+  const lineHeight = size + lineGap;
+
+  const glyphs = [];
+  let row = 0;
+
+  const paragraphs = String(text).split('\n');
+  const perLine = Math.max(1, Math.floor((box.w * 0.98 + letterGap) / advance));
+
+  for (const para of paragraphs) {
+    if (!para) { row++; continue; }
+
+    const units = [...para].map(c => ({ text: c, tate: false }));
+    const starts = breakLines(units, perLine);
+
+    for (let s = 0; s < starts.length; s++) {
+      const from = starts[s];
+      const to = s + 1 < starts.length ? starts[s + 1] : units.length;
+
+      let cx = box.x;
+      const cy = box.y + row * lineHeight;
+
+      for (let i = from; i < to; i++) {
+        glyphs.push({
+          text: units[i].text, x: cx, y: cy, size, rotate: false, tate: false,
+        });
+        cx += advance;
+      }
+      row++;
+    }
+  }
+
+  const usedH = row * lineHeight;
+  return { glyphs, lines: row, overflow: usedH > box.h + 0.5, usedH };
+}
+
+/**
+ * 依規格要求：框線固定，字級自動縮放到塞得下為止。
+ *
+ * 中文字數約為日文的 0.6–0.8 倍，多數情況會有剩餘空間；
+ * 但標題、圖說這種原本就排得很滿的框仍可能爆掉，所以要往下找。
+ *
+ * @param {string} text
+ * @param {{x,y,w,h}} box
+ * @param {{vertical:boolean, size:number, minScale?:number}} opts
+ * @returns {{glyphs:Glyph[], size:number, scale:number, overflow:boolean, lines:number}}
+ */
+export function fitText(text, box, opts) {
+  const vertical = opts.vertical;
+  const run = vertical ? layoutVertical : layoutHorizontal;
+  const minScale = opts.minScale ?? 0.08;
+
+  const full = run(text, box, { size: opts.size });
+  if (!full.overflow) {
+    return { ...full, size: opts.size, scale: 1 };
+  }
+
+  // 二分搜尋最大的可容納字級。overflow 對字級是單調的，所以二分是安全的。
+  let lo = minScale, hi = 1, best = null;
+  for (let i = 0; i < 18; i++) {
+    const mid = (lo + hi) / 2;
+    const r = run(text, box, { size: opts.size * mid });
+    if (r.overflow) {
+      hi = mid;
+    } else {
+      lo = mid;
+      best = { ...r, size: opts.size * mid, scale: mid };
+    }
+    if (hi - lo < 0.004) break;
+  }
+
+  if (best) return best;
+
+  // 縮到下限還是塞不下：照下限排出來，並如實標記溢出，
+  // 讓預覽頁能把這一塊標出來給使用者處理，而不是默默截斷。
+  const floor = run(text, box, { size: opts.size * minScale });
+  return { ...floor, size: opts.size * minScale, scale: minScale, overflow: true };
+}
+
+/**
+ * 直排時全形標點的墨水只佔半格，量寬度時要扣掉，
+ * 否則整欄會被撐開看起來鬆散。目前只用於估算，實際繪製仍逐字定位。
+ */
+export function inkWidth(ch, size) {
+  return HALF_WIDTH_IN_VERTICAL.has(ch) ? size * 0.5 : size;
+}

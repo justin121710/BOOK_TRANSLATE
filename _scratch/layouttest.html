@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>直排排版驗證</title>
+<style>
+  body { background:#fff; color:#111; font:13px/1.6 system-ui; margin:12px; }
+  pre { background:#f5f5f5; padding:10px; white-space:pre-wrap; font-size:12px; }
+  .pass { color:#0a0; } .fail { color:#c00; font-weight:700; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start; margin-top:10px; }
+  figure { margin:0; }
+  figcaption { font-size:12px; color:#555; margin-bottom:3px; }
+  canvas { border:1px solid #bbb; }
+</style>
+<pre id="log"></pre>
+<div class="row" id="out"></div>
+<script type="module">
+import { layoutVertical, layoutHorizontal, fitText } from '../src/render/layout.js';
+import { segment, breakLines, placement, ROTATE, CORNER_TOP_RIGHT } from '../src/render/rules.js';
+import { drawGlyphs } from '../src/render/canvas.js';
+
+const out = [];
+let fails = 0;
+const log = (s='') => out.push(s);
+const ok = (c, label, extra='') => {
+  if (!c) fails++;
+  log(`${c ? '  ✓' : '  ✗ 失敗'} ${label}${extra ? '  → ' + extra : ''}`);
+};
+
+/* ================= 1. 字元規則 ================= */
+
+log('【1】字元規則');
+{
+  // 位移量要夠大才推得到右上角：CJK 標點的墨水原本偏在 em 框左下
+  ok(placement('。').offsetX >= 0.4 && placement('。').offsetY <= -0.4, '。移到字格右上角',
+     JSON.stringify(placement('。')));
+  ok(placement('、').offsetX >= 0.4 && placement('、').offsetY <= -0.4, '、同樣移到右上');
+  ok(placement('「').rotate === true, '「需要旋轉');
+  ok(placement('）').rotate === true, '）需要旋轉');
+  ok(placement('—').rotate === true, '破折號需要旋轉');
+  ok(placement('我').rotate === false && placement('我').offsetX === 0, '一般漢字不旋轉不位移');
+}
+
+/* ================= 2. 縦中横 ================= */
+
+log('\n【2】縦中横');
+{
+  const s = segment('第12章');
+  ok(s.length === 3, '切成三個單元', JSON.stringify(s.map(u=>u.text)));
+  ok(s[1].text === '12' && s[1].tate === true, '兩位數合併成一個橫置單元', JSON.stringify(s[1]));
+
+  const long = segment('第2024年');
+  ok(long.every(u => u.text.length === 1), '四位數不合併，改為逐字直排',
+     JSON.stringify(long.map(u=>u.text)));
+
+  const ab = segment('AB型');
+  ok(ab[0].text === 'AB' && ab[0].tate, '兩個字母也合併', JSON.stringify(ab[0]));
+}
+
+/* ================= 3. 禁則 ================= */
+
+log('\n【3】禁則處理');
+{
+  // 一欄 5 個字，第 6 個字剛好是句號 → 必須把切點往前挪
+  const units = [...'我們走吧。好啊'].map(t => ({ text: t }));
+  const starts = breakLines(units, 5);
+  const secondLineFirst = units[starts[1]].text;
+  ok(!'。、」）'.includes(secondLineFirst), '下一欄開頭不是禁則字元',
+     `第二欄從「${secondLineFirst}」開始`);
+
+  // 行尾不能是起始括號
+  const u2 = [...'甲乙丙丁「戊己'].map(t => ({ text: t }));
+  const s2 = breakLines(u2, 5);
+  const firstLineLast = u2[s2[1] - 1].text;
+  ok(firstLineLast !== '「', '這一欄結尾不是起始括號', `第一欄結尾是「${firstLineLast}」`);
+}
+
+/* ================= 4. 直排幾何 ================= */
+
+log('\n【4】直排幾何');
+{
+  const box = { x: 100, y: 50, w: 200, h: 300 };
+  const r = layoutVertical('一二三四五六七八九十', box, { size: 20 });
+
+  ok(r.glyphs.length === 10, '十個字都排進去', String(r.glyphs.length));
+
+  const g0 = r.glyphs[0], g1 = r.glyphs[1];
+  ok(g1.y > g0.y, '同一欄內由上往下', `${g0.y} → ${g1.y}`);
+  ok(Math.abs(g1.x - g0.x) < 0.01, '同一欄 x 相同');
+
+  // 第一欄必須貼在框的右側
+  ok(g0.x > box.x + box.w / 2, '第一欄在框的右半邊', `x=${g0.x.toFixed(1)} 框右緣=${box.x+box.w}`);
+
+  // 換欄後要往左
+  const many = layoutVertical('一二三四五六七八九十甲乙丙丁戊己庚辛壬癸', box, { size: 20 });
+  const firstCol = many.glyphs[0].x;
+  const lastCol = many.glyphs[many.glyphs.length - 1].x;
+  ok(lastCol < firstCol, '後面的欄位在左邊（右→左）', `${firstCol.toFixed(1)} → ${lastCol.toFixed(1)}`);
+  ok(many.lines >= 2, '有換欄', String(many.lines));
+}
+
+/* ================= 5. 換行結構保留 ================= */
+
+log('\n【5】原文換行結構');
+{
+  const box = { x: 0, y: 0, w: 400, h: 200 };
+  const one = layoutVertical('甲乙丙', box, { size: 20 });
+  const two = layoutVertical('甲乙丙\n丁戊己', box, { size: 20 });
+  ok(two.lines > one.lines, '換行會另起一欄', `${one.lines} → ${two.lines}`);
+
+  const gap = layoutVertical('甲\n\n乙', box, { size: 20 });
+  ok(gap.lines >= 3, '空行也佔一欄（段落間距）', String(gap.lines));
+}
+
+/* ================= 6. 字級自動縮放 ================= */
+
+log('\n【6】字級自動縮放，框線固定');
+{
+  const box = { x: 0, y: 0, w: 60, h: 200 };   // 只夠兩欄
+  const long = '這是一段很長的文字'.repeat(6);
+
+  const r = fitText(long, box, { vertical: true, size: 24 });
+  ok(r.scale < 1, '字級有被縮小', `scale=${r.scale.toFixed(3)}`);
+  ok(!r.overflow, '縮放後不再溢出');
+  ok(r.size < 24 && r.size > 0, '字級為正且小於原始值', r.size.toFixed(2));
+
+  // 塞得下的情況不該亂縮
+  const easy = fitText('短', { x:0, y:0, w:200, h:200 }, { vertical: true, size: 20 });
+  ok(easy.scale === 1, '塞得下時維持原字級', String(easy.scale));
+
+  // 極端情況要如實回報溢出，而不是默默截斷
+  const tiny = fitText('字'.repeat(400), { x:0, y:0, w:12, h:12 }, { vertical: true, size: 20 });
+  ok(tiny.overflow === true, '真的塞不下時標記 overflow');
+  ok(tiny.glyphs.length > 0, '仍然排出內容而非丟棄', String(tiny.glyphs.length));
+}
+
+/* ================= 7. 橫排 ================= */
+
+log('\n【7】橫排');
+{
+  const box = { x: 10, y: 10, w: 300, h: 100 };
+  const r = layoutHorizontal('第一行文字\n第二行文字', box, { size: 18 });
+  const g0 = r.glyphs[0], g1 = r.glyphs[1];
+  ok(g1.x > g0.x, '同一行由左往右');
+  ok(Math.abs(g1.y - g0.y) < 0.01, '同一行 y 相同');
+  ok(r.lines === 2, '兩行', String(r.lines));
+}
+
+/* ================= 視覺輸出 ================= */
+
+const show = (canvas, caption) => {
+  const f = document.createElement('figure');
+  const c = document.createElement('figcaption');
+  c.textContent = caption;
+  f.append(c, canvas);
+  document.getElementById('out').append(f);
+};
+
+function paint(text, box, size, vertical, caption) {
+  const c = document.createElement('canvas');
+  c.width = box.w + box.x * 2;
+  c.height = box.h + box.y * 2;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#faf7f0'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.strokeStyle = '#ccc'; ctx.strokeRect(box.x, box.y, box.w, box.h);
+
+  const r = fitText(text, box, { vertical, size });
+  drawGlyphs(ctx, r.glyphs, { fontFamily: '"Noto Serif TC","Songti TC",serif' });
+  show(c, `${caption}　scale=${r.scale.toFixed(2)} 欄數=${r.lines}`);
+  return r;
+}
+
+paint('第一章　窗外的雨\n「你是誰？」少女問道——聲音裡沒有一絲恐懼。\n那是1923年的事了。',
+      { x: 20, y: 20, w: 260, h: 420 }, 22, true, '直排（含標點、括號、破折號、縦中横）');
+
+paint('這一段刻意寫得很長，長到必須自動縮小字級才塞得進這個窄框裡面，用來驗證二分搜尋確實有效。',
+      { x: 20, y: 20, w: 110, h: 300 }, 22, true, '窄框自動縮字');
+
+paint('第一章　窗外的雨\n「你是誰？」少女問道——聲音裡沒有一絲恐懼。',
+      { x: 20, y: 20, w: 320, h: 160 }, 20, false, '橫排對照');
+
+/* 放大檢視標點在字格裡的位置 —— 直排看起來對不對就取決於這個 */
+{
+  const box = { x: 30, y: 20, w: 200, h: 460 };
+  const c = document.createElement('canvas');
+  c.width = 260; c.height = 500;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+
+  const r = fitText('好。壞、「引」（括）—…', box, { vertical: true, size: 56 });
+
+  // 把每個字格畫出來，就看得出標點有沒有落在該去的角落
+  ctx.strokeStyle = '#e3d9c6'; ctx.lineWidth = 1;
+  for (const g of r.glyphs) {
+    ctx.strokeRect(g.x - (g.rotate ? 0 : 0), g.y, g.size, g.size);
+    ctx.beginPath();
+    ctx.moveTo(g.x, g.y + g.size / 2); ctx.lineTo(g.x + g.size, g.y + g.size / 2);
+    ctx.moveTo(g.x + g.size / 2, g.y); ctx.lineTo(g.x + g.size / 2, g.y + g.size);
+    ctx.strokeStyle = '#f0e9dc'; ctx.stroke();
+    ctx.strokeStyle = '#e3d9c6';
+  }
+  drawGlyphs(ctx, r.glyphs, { fontFamily: '"Noto Serif TC","Songti TC",serif' });
+  show(c, '標點位置放大檢視（格線為字格與中心線）');
+}
+
+/* ---------- 收尾 ---------- */
+log('\n' + (fails === 0 ? '✅ 全部通過' : `❌ 有 ${fails} 項失敗`));
+const el = document.getElementById('log');
+el.textContent = out.join('\n');
+el.className = fails === 0 ? 'pass' : 'fail';
+document.title = fails === 0 ? 'PASS' : 'FAIL ' + fails;
+</script>
