@@ -90,8 +90,15 @@ _scratch/warptest.html    透視校正驗證頁（含接縫量測）
 兩組自帶的 API 金鑰，在 App 的設定頁填入，只存在本機瀏覽器：
 
 1. **Google Cloud Vision** — OCR 與版面座標。
-   請在 Google Cloud Console 為金鑰設定 **HTTP referrer 限制**，只允許本站網域。
+   取得與鎖定金鑰的完整步驟見 **[docs/google-vision-setup.md](docs/google-vision-setup.md)**。
 2. **Anthropic Claude** — 翻譯與版面語意判讀。
+   到 [Anthropic Console](https://console.anthropic.com/settings/keys) 建立金鑰。
+
+金鑰只存在你這台裝置的瀏覽器 localStorage，不會進入 repo，也不會上傳到任何伺服器。
+`tools/check-secrets.mjs` 會在每次 commit 前掃描，擋住手滑把金鑰寫進程式碼的情況
+（已安裝為 `.git/hooks/pre-commit`）。
+
+風險評估、配額上限與輪替方式見 **[docs/api-keys-safety.md](docs/api-keys-safety.md)**。
 
 首次匯出 PDF 前要在設定頁下載中文字型，兩套合計約 17 MB（下載一次後快取）。
 
