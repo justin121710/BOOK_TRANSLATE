@@ -7,15 +7,16 @@
  */
 
 export const KINDS = {
-  title:   '章節標題或大標',
-  body:    '正文',
-  caption: '圖片或表格的說明文字',
-  note:    '註解、註釋、譯註、小字補充',
-  quote:   '引文、書信、詩句等與正文區隔的段落',
-  table:   '表格內的文字',
-  header:  '頁眉、書名側標、章名側標',
-  footer:  '頁尾',
-  pagenum: '頁碼',
+  title:      '章節標題或大標',
+  body:       '正文',
+  caption:    '圖片或表格的說明文字',
+  note:       '註解、註釋、譯註、小字補充',
+  quote:      '引文、書信、詩句等與正文區隔的段落',
+  table:      '表格內的文字',
+  figuretext: '印在插圖或照片上的文字，例如招牌、標示、對白框',
+  header:     '頁眉、書名側標、章名側標',
+  footer:     '頁尾',
+  pagenum:    '頁碼',
 };
 
 /** 這幾類不送翻譯：改成從原圖裁切貼回，既保留原樣也避開缺字問題。 */
@@ -46,6 +47,8 @@ ${Object.entries(KINDS).map(([k, v]) => `- \`${k}\`：${v}`).join('\n')}
   header / footer / pagenum，不是正文。
 - 字級明顯大於其他區塊、獨立成塊、位置靠上的，通常是 title。
 - 緊鄰圖片、字級偏小、以「図」「表」「写真」等字開頭的，通常是 caption。
+- 標記為「圖內文字」的區塊一律歸為 figuretext。那些字會直接蓋回插圖上，
+  空間很有限，譯文要盡量精簡，但仍不可增刪原意。
 
 被判為 header、footer、pagenum 的區塊**不要翻譯**，translation 欄位留空字串。
 那些區塊會直接從原始掃描影像裁切貼回，保留原樣。
@@ -103,6 +106,7 @@ export const TOOL = {
  */
 export function buildUserMessage(blocks, size, glossary, ctx = {}) {
   const parts = [];
+  const carried = new Set(ctx.carriedIds || []);
 
   if (ctx.bookName) parts.push(`書名：${ctx.bookName}`);
   if (ctx.pageNo != null) parts.push(`這是第 ${ctx.pageNo} 頁。`);
@@ -119,6 +123,15 @@ export function buildUserMessage(blocks, size, glossary, ctx = {}) {
     parts.push(ctx.tail);
   }
 
+  if (carried.size) {
+    parts.push(
+      '\n## 跨頁的段落\n' +
+      '標記為「接續下一頁」的區塊，內容在原書裡和本頁最後一段是同一個句子或段落，' +
+      '只是被印在下一頁的開頭。\n' +
+      '請把它們**當成同一段一起理解後再翻譯**，各自回傳自己那一段對應的譯文。\n' +
+      '不要把下一頁的內容併進本頁的區塊，也不要重複翻譯同一段話。');
+  }
+
   parts.push('\n## 本頁區塊\n');
   parts.push('座標為 [左, 上, 寬, 高]，已正規化到 0–1，原點在頁面左上角。\n');
 
@@ -127,14 +140,44 @@ export function buildUserMessage(blocks, size, glossary, ctx = {}) {
     const [x, y, bw, bh] = b.bbox;
     const box = [x / w, y / h, bw / w, bh / h].map(v => v.toFixed(3)).join(', ');
     const size_ = (b.fontSize / h).toFixed(4);
+    const flags = [
+      b.vertical ? '直排' : '橫排',
+      carried.has(b.id) ? '**接續下一頁**' : '',
+    ].filter(Boolean).join('　');
     return [
       `### ${b.id}`,
-      `座標 [${box}]　相對字高 ${size_}　${b.vertical ? '直排' : '橫排'}`,
+      `座標 [${box}]　相對字高 ${size_}　${flags}`,
       b.srcText,
     ].join('\n');
   }).join('\n\n'));
 
   return parts.join('\n');
+}
+
+/* ---------- 跨頁段落的判定 ---------- */
+
+/** 句子結束的標記。缺了這些就代表話還沒說完。 */
+const TERMINAL = /[。！？!?」』）\)】〕》〉…]\s*$/;
+
+/** 這幾類本來就是獨立的短句，不該跨頁相連。 */
+const NON_FLOWING = new Set(['title', 'header', 'footer', 'pagenum', 'caption', 'figuretext', 'table']);
+
+/**
+ * 上一段是否延續到下一段？
+ * 只看標點：日文句子的動詞在句尾，沒有句號就代表話沒說完。
+ */
+export function flowsInto(prev, next) {
+  if (!prev || !next) return false;
+  if (NON_FLOWING.has(prev.kind) || NON_FLOWING.has(next.kind)) return false;
+  if (prev.skipTranslate || next.skipTranslate) return false;
+
+  const tail = String(prev.srcText || '').replace(/[\s　]+$/, '');
+  if (!tail) return false;
+  if (TERMINAL.test(tail)) return false;
+
+  // 下一段若以起始括號開頭，多半是新的一句對白，不是接續
+  if (/^[「『（(【〔《〈]/.test(String(next.srcText || '').trim())) return false;
+  return true;
 }
 
 /** 粗估這一頁要多少 token，用來事前顯示費用。 */

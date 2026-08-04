@@ -275,10 +275,21 @@ export default async function projectView(root, { id }) {
     const paid = todo.length - free;
     const uncorrected = todo.filter(p => !p.corners && !p.nativeText?.length).length;
 
+    // 圖片框要在辨識之前畫好：框內的文字才會被歸成「圖內文字」走覆蓋那條路
+    let withFigures = 0;
+    for (const pg of todo) {
+      if ((await db.getBy('figures', 'pageId', pg.id)).length) withFigures++;
+    }
+
     const detail = [
       paid ? `${paid} 頁會送 Google Vision 辨識，約 US$${(paid * 0.0015).toFixed(3)}（每月前 1000 頁免費）。` : '',
       free ? `${free} 頁有原生文字層，直接取用座標，不花錢。` : '',
       uncorrected ? `\n注意：有 ${uncorrected} 頁還沒做透視校正。拍歪的頁面直接辨識，座標會跟著歪，重排後會對不上。` : '',
+      withFigures < todo.length
+        ? `\n提醒：有 ${todo.length - withFigures} 頁還沒畫圖片框。` +
+          '框內的文字會被歸成「圖內文字」，匯出時蓋掉原字寫上中譯；' +
+          '沒先畫的話那些字會被當成正文抽出來重排。建議先進單頁畫好再辨識。'
+        : '',
     ].filter(Boolean).join('\n');
 
     const yes = await askConfirm(`辨識 ${todo.length} 頁？`, { detail, okLabel: '開始' });

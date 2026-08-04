@@ -3,6 +3,7 @@
 
 import { fitText, EM_ASCENT } from './layout.js';
 import { RULE_THICKNESS } from './rules.js';
+import { sampleBackground, inkFor } from '../pdf/figures.js';
 
 /**
  * @param {CanvasRenderingContext2D} ctx
@@ -68,10 +69,17 @@ export function renderPage(size, blocks, opts = {}) {
   canvas.width = Math.round(size.width * scale);
   canvas.height = Math.round(size.height * scale);
 
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.scale(scale, scale);
+
+  // 插圖原樣貼回。有傳影像才畫得出來，預覽才會和匯出一致
+  if (opts.image) {
+    for (const f of opts.figures || []) {
+      ctx.drawImage(opts.image, f.x, f.y, f.w, f.h, f.x, f.y, f.w, f.h);
+    }
+  }
 
   const report = [];
 
@@ -80,6 +88,19 @@ export function renderPage(size, blocks, opts = {}) {
 
     const [x, y, w, h] = b.bbox;
     const box = { x, y, w, h };
+
+    /* 圖內文字：蓋掉原字再寫上中譯，和 PDF 匯出的處理一致。
+       這裡的取樣要在插圖已經畫上去之後才做，不然取到的是白底。 */
+    let ink = null;
+    if (b.kind === 'figuretext' && opts.image) {
+      const bg = sampleBackground(opts.image, box);
+      const pad = Math.max(2, b.fontSize * 0.12);
+      ctx.fillStyle = `rgb(${bg.r},${bg.g},${bg.b})`;
+      ctx.fillRect(x - pad, y - pad, w + pad * 2, h + pad * 2);
+      const c = inkFor(bg);
+      ink = `rgb(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)})`;
+    }
+
     const laid = fitText(b.dstText, box, {
       vertical: b.vertical,
       size: b.fontSize,
@@ -94,8 +115,11 @@ export function renderPage(size, blocks, opts = {}) {
       ctx.restore();
     }
 
-    drawGlyphs(ctx, laid.glyphs, { fontFamily: opts.fontFamily });
-    report.push({ id: b.id, scale: laid.scale, overflow: laid.overflow, lines: laid.lines });
+    drawGlyphs(ctx, laid.glyphs, { fontFamily: opts.fontFamily, color: ink });
+    report.push({
+      id: b.id, kind: b.kind,
+      scale: laid.scale, overflow: laid.overflow, lines: laid.lines,
+    });
   }
 
   return { canvas, report };

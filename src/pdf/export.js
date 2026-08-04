@@ -13,7 +13,7 @@ import fontkit from '@pdf-lib/fontkit';
 import * as db from '../state/db.js';
 import { settings } from '../state/settings.js';
 import { loadFont, subsetFont, findMissingGlyphs } from './fonts.js';
-import { crop } from './figures.js';
+import { crop, sampleBackground, inkFor } from './figures.js';
 import { processedBlob } from '../input/pages.js';
 import { blobToBitmap, toBlob } from '../preprocess/enhance.js';
 import { fitText, EM_ASCENT } from '../render/layout.js';
@@ -126,6 +126,35 @@ export async function exportPdf(project, pages, opts = {}) {
     }
 
     for (const b of blocks) {
+      /* 圖內文字：插圖已經貼回去了，這裡把原本的日文蓋掉再把中譯寫上去。
+         直接塗白在彩色插圖上會留下白斑，所以填的是四周取樣來的背景色。 */
+      if (b.kind === 'figuretext' && bitmap && b.dstText) {
+        const [bx, by, bw, bh] = b.bbox;
+        const bg = sampleBackground(bitmap, { x: bx, y: by, w: bw, h: bh });
+        const ink = inkFor(bg);
+
+        // 蓋的範圍比文字框大一點，免得原字的邊緣露出來
+        const pad = Math.max(2, b.fontSize * 0.12);
+        out.drawRectangle({
+          x: (bx - pad) * k,
+          y: ph - (by + bh + pad) * k,
+          width: (bw + pad * 2) * k,
+          height: (bh + pad * 2) * k,
+          color: rgb(bg.r / 255, bg.g / 255, bg.b / 255),
+        });
+
+        const laid = fitText(b.dstText, { x: bx, y: by, w: bw, h: bh }, {
+          vertical: b.vertical,
+          size: b.fontSize,
+          minScale: settings.minFontScale,
+        });
+        const font = serif || sans;
+        if (font) {
+          for (const g of laid.glyphs) drawGlyph(out, font, g, k, ph, ink);
+        }
+        continue;
+      }
+
       // 頁眉、頁碼、側標不翻譯：從原圖裁下來貼回，保留原樣也避開缺字問題
       if (b.skipTranslate) {
         if (!bitmap) continue;      // 沒有原圖可裁，只能略過
@@ -179,9 +208,10 @@ export async function exportPdf(project, pages, opts = {}) {
  * layout 的座標是左上原點、y 向下，且 g.y 指的是字面框頂端；
  * PDF 是左下原點、y 向上，且定位的是基線。這裡是唯一做這個換算的地方。
  */
-function drawGlyph(page, font, g, k, pageH) {
+function drawGlyph(page, font, g, k, pageH, ink) {
   const size = g.size * k;
   const baselineTop = g.y + g.size * EM_ASCENT;   // 影像座標系裡的基線位置
+  const color = ink ? rgb(ink.r, ink.g, ink.b) : rgb(0.1, 0.1, 0.1);
 
   if (g.rule) {
     // 破折號畫成實心長條，和預覽那邊一致
@@ -191,7 +221,7 @@ function drawGlyph(page, font, g, k, pageH) {
       y: pageH - (g.y + g.size) * k,
       width: t,
       height: size,
-      color: rgb(0.1, 0.1, 0.1),
+      color,
     });
     // 再疊一層完全透明的文字：畫面上看不到，但複製貼上與搜尋時破折號還在。
     // 少了這步，文字層會直接漏掉這個字。
@@ -215,7 +245,7 @@ function drawGlyph(page, font, g, k, pageH) {
     page.drawText(g.text, {
       x: cx + half,
       y: cy - half + size * (EM_ASCENT - 0.5),
-      size, font, rotate: degrees(-90), color: rgb(0.1, 0.1, 0.1),
+      size, font, rotate: degrees(-90), color,
     });
     return;
   }
@@ -228,7 +258,7 @@ function drawGlyph(page, font, g, k, pageH) {
       x: g.x * k + (size - w * scale) / 2,
       y: pageH - baselineTop * k,
       size: size * scale,
-      font, color: rgb(0.1, 0.1, 0.1),
+      font, color,
     });
     return;
   }
@@ -236,7 +266,7 @@ function drawGlyph(page, font, g, k, pageH) {
   page.drawText(g.text, {
     x: g.x * k,
     y: pageH - baselineTop * k,
-    size, font, color: rgb(0.1, 0.1, 0.1),
+    size, font, color,
   });
 }
 

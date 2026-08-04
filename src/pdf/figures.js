@@ -149,6 +149,56 @@ function erode(buf, cols, rows) {
   }
 }
 
+/**
+ * 取樣一個矩形四周的背景色。
+ *
+ * 圖內文字要用「蓋掉再重寫」的方式取代，直接塗白在彩色插圖上會留下一塊突兀的白斑。
+ * 取文字框外圍一圈的中位色來填，多數情況（對白框、招牌、單色底的標示）會融進背景。
+ *
+ * @returns {{r:number,g:number,b:number}}
+ */
+export function sampleBackground(image, rect) {
+  const pad = Math.max(3, Math.min(rect.w, rect.h) * 0.18);
+  const x0 = Math.max(0, Math.floor(rect.x - pad));
+  const y0 = Math.max(0, Math.floor(rect.y - pad));
+  const x1 = Math.min(image.width, Math.ceil(rect.x + rect.w + pad));
+  const y1 = Math.min(image.height, Math.ceil(rect.y + rect.h + pad));
+  const w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
+
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(image, x0, y0, w, h, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+
+  // 只取外圈：內部就是要蓋掉的文字，取進來會把顏色拉暗
+  const innerX0 = rect.x - x0, innerY0 = rect.y - y0;
+  const innerX1 = innerX0 + rect.w, innerY1 = innerY0 + rect.h;
+
+  const rs = [], gs = [], bs = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (x >= innerX0 && x < innerX1 && y >= innerY0 && y < innerY1) continue;
+      const i = (y * w + x) * 4;
+      rs.push(data[i]); gs.push(data[i + 1]); bs.push(data[i + 2]);
+    }
+  }
+  if (!rs.length) return { r: 255, g: 255, b: 255 };
+
+  // 用中位數而不是平均：外圈難免掃到一點文字或邊框，平均會被拉偏
+  const mid = (arr) => {
+    arr.sort((a, b) => a - b);
+    return arr[arr.length >> 1];
+  };
+  return { r: mid(rs), g: mid(gs), b: mid(bs) };
+}
+
+/** 依背景亮度挑一個看得清楚的文字顏色。 */
+export function inkFor({ r, g, b }) {
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.55 ? { r: 0.1, g: 0.1, b: 0.1 } : { r: 0.97, g: 0.97, b: 0.97 };
+}
+
 /** 從頁面影像裁下一塊，回傳 canvas。用於把插圖與不翻譯的頁眉頁碼貼回 PDF。 */
 export function crop(image, rect) {
   const c = document.createElement('canvas');

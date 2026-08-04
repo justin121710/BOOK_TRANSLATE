@@ -8,7 +8,7 @@ import { cropper } from '../ui/cropper.js';
 
 const KIND_LABEL = {
   title: '標題', body: '正文', caption: '圖說', note: '註解', quote: '引文',
-  table: '表格', header: '頁眉', footer: '頁尾', pagenum: '頁碼',
+  table: '表格', figuretext: '圖內文字', header: '頁眉', footer: '頁尾', pagenum: '頁碼',
 };
 
 export default async function pageView(root, { id }) {
@@ -216,8 +216,14 @@ export default async function pageView(root, { id }) {
       const H = current.procH || current.origH;
       const scale = Math.min(1, 900 / Math.max(W, H));
 
+      // 帶進影像與圖片框，預覽才會和匯出長得一樣（插圖、圖內文字的覆蓋）
+      const src = await processedBlob(current);
+      const bmp = src ? await blobToBitmap(src) : null;
+      const figs = bmp ? await db.getBy('figures', 'pageId', current.id) : [];
+
       const { canvas, report } = renderPage({ width: W, height: H }, blocks,
-        { scale, showBoxes: true });
+        { scale, showBoxes: true, image: bmp, figures: figs });
+      bmp?.close?.();
 
       const wrap = document.createElement('div');
       wrap.className = 'compare';
@@ -340,6 +346,14 @@ export default async function pageView(root, { id }) {
       note.className = 'block-note';
       note.textContent = '不翻譯，匯出時從原圖裁切貼回';
       body.append(note);
+    } else if (b.kind === 'figuretext' && b.dstText) {
+      const dst = document.createElement('p');
+      dst.className = 'block-dst';
+      dst.textContent = b.dstText.replace(/\n/g, '⏎');
+      const note = document.createElement('p');
+      note.className = 'block-note';
+      note.textContent = '匯出時會蓋掉插圖上的原字，把這段中譯寫上去';
+      body.append(dst, note);
     } else if (b.dstText) {
       const dst = document.createElement('p');
       dst.className = 'block-dst';

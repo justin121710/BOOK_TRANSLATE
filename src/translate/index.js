@@ -6,7 +6,7 @@ import { messages, ClaudeError } from '../api/claude.js';
 import * as gemini from '../api/gemini.js';
 import {
   SYSTEM, TOOL, NO_TRANSLATE, buildUserMessage, estimateTokens, estimateCost,
-  GEMINI_SYSTEM, GEMINI_SCHEMA,
+  GEMINI_SYSTEM, GEMINI_SCHEMA, flowsInto,
 } from './prompt.js';
 import * as glossary from './glossary.js';
 import { markPageNumbers } from '../ocr/pagenum.js';
@@ -99,16 +99,23 @@ export async function translatePage(page, opts = {}) {
 
   const terms = glossary.trim(await glossary.load(page.projectId));
 
-  const userMessage = buildUserMessage(pending, { width, height }, terms, {
+  /* 句子被印到下一頁時，把下一頁開頭那一段一起送進來翻。
+     否則模型看到的是半句話：它可能自作主張補完，而下一頁又會再翻一次同樣的內容。
+     借過來的區塊會直接寫入它自己那一頁，等輪到那一頁時就會被當成已完成而跳過。 */
+  const carried = await carryOver(page, pending, opts);
+  const outgoing = carried.length ? [...pending, ...carried] : pending;
+
+  const userMessage = buildUserMessage(outgoing, { width, height }, terms, {
     bookName: opts.bookName,
     pageNo: page.index + 1,
     vertical: page.vertical,
     tail: opts.tail,
+    carriedIds: carried.map(b => b.id),
   });
 
   const { result, usage, cost } = await askModel(userMessage, { signal: opts.signal });
 
-  const byId = new Map(blocks.map(b => [b.id, b]));
+  const byId = new Map([...blocks, ...carried].map(b => [b.id, b]));
   const writes = [];
   let translated = 0;
 
@@ -129,7 +136,7 @@ export async function translatePage(page, opts = {}) {
 
   // 模型漏掉的區塊不能就這樣消失，標記出來讓使用者看得到
   const returned = new Set((result.blocks || []).map(b => b.id));
-  for (const b of pending) {
+  for (const b of outgoing) {
     if (!returned.has(b.id)) {
       b.dstText = null;
       b.error = '模型沒有回傳這一塊的譯文';
@@ -141,14 +148,45 @@ export async function translatePage(page, opts = {}) {
 
   const gloss = await glossary.merge(page.projectId, result.glossary || []);
 
-  const missing = writes.filter(b => b.error).length;
+  // 借過來的區塊屬於下一頁，本頁的完成度不該被它影響
+  const mine = new Set(blocks.map(b => b.id));
+  const missing = writes.filter(b => b.error && mine.has(b.id)).length;
   await db.put('pages', {
     ...page,
     status: missing ? 'failed' : 'translated',
     error: missing ? `有 ${missing} 個區塊沒有譯文` : null,
   });
 
-  return { blocks: writes, translated, glossary: gloss, usage, cost };
+  return { blocks: writes, translated, carried: carried.length, glossary: gloss, usage, cost };
+}
+
+/**
+ * 找出「本頁最後一段還沒說完、接到下一頁開頭」的情況，
+ * 把下一頁那一段借過來一起翻。
+ *
+ * 只借一段：借太多會讓單次請求變大，而且連續三頁以上的長段落
+ * 會在下一頁自己再借一次，效果一樣。
+ */
+async function carryOver(page, pending, opts) {
+  if (opts.noCarry || !pending.length) return [];
+
+  const last = pending[pending.length - 1];
+  if (!last || last.skipTranslate) return [];
+
+  const siblings = (await db.getBy('pages', 'projectId', page.projectId))
+    .sort((a, b) => a.index - b.index);
+  const next = siblings.find(p => p.index === page.index + 1);
+  if (!next) return [];
+
+  const nextBlocks = (await db.getBy('blocks', 'pageId', next.id))
+    .sort((a, b) => a.order - b.order);
+  const first = nextBlocks.find(b => !b.skipTranslate);
+
+  // 已經翻過的不要再動：可能是使用者手動改過或先前借過去的
+  if (!first || first.dstText != null) return [];
+  if (!flowsInto(last, first)) return [];
+
+  return [first];
 }
 
 /** 取這一頁末尾的正文，當作下一頁的銜接上下文。 */

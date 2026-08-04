@@ -53,6 +53,12 @@ export async function recognisePage(page, opts = {}) {
     height: page.procH || page.origH,
   });
 
+  /* 使用者事先畫好的圖片框：落在框內的文字是「圖內文字」，
+     匯出時會蓋掉原字再把中譯寫上去，而不是當成正文重排。
+     所以圖片框最好在辨識之前就畫好。 */
+  const figures = await db.getBy('figures', 'pageId', page.id);
+  const inFigure = markFigureText(parsed.blocks, figures);
+
   await db.delBy('blocks', 'pageId', page.id);
 
   const rows = parsed.blocks.map(b => ({
@@ -76,7 +82,37 @@ export async function recognisePage(page, opts = {}) {
     vertical: parsed.vertical,
     rubyDropped: parsed.rubyDropped,
     pageNumbers: pageNums,
+    figureText: inFigure,
   };
+}
+
+/**
+ * 把落在圖片框內的文字標成 figuretext，並記下屬於哪一個框。
+ * 判定用「重疊面積佔文字塊的比例」而不是中心點：
+ * 橫跨圖片邊界的說明文字用中心點判會誤判。
+ */
+function markFigureText(blocks, figures) {
+  if (!figures?.length) return 0;
+  let n = 0;
+
+  for (const b of blocks) {
+    if (b.skipTranslate) continue;
+    const [bx, by, bw, bh] = b.bbox;
+    const area = bw * bh;
+    if (area <= 0) continue;
+
+    for (const f of figures) {
+      const ox = Math.max(0, Math.min(bx + bw, f.x + f.w) - Math.max(bx, f.x));
+      const oy = Math.max(0, Math.min(by + bh, f.y + f.h) - Math.max(by, f.y));
+      if ((ox * oy) / area >= 0.6) {
+        b.kind = 'figuretext';
+        b.figureId = f.id;
+        n++;
+        break;
+      }
+    }
+  }
+  return n;
 }
 
 function rescale(blocks, k) {

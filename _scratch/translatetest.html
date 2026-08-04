@@ -10,7 +10,7 @@
 <script type="module">
 import * as db from '../src/state/db.js';
 import { settings } from '../src/state/settings.js';
-import { buildUserMessage, estimateTokens, estimateCost, NO_TRANSLATE } from '../src/translate/prompt.js';
+import { buildUserMessage, estimateTokens, estimateCost, NO_TRANSLATE, flowsInto } from '../src/translate/prompt.js';
 import * as glossary from '../src/translate/glossary.js';
 import * as gemini from '../src/api/gemini.js';
 import { translatePage, tailOf } from '../src/translate/index.js';
@@ -276,6 +276,76 @@ log('\n【9】Gemini 模型清單只留支援 generateContent 的');
   const models = await gemini.listModels();
   ok(models.length === 1, '過濾掉只支援 embedContent 的模型', String(models.length));
   ok(models[0].id === 'gemini-2.5-flash', 'models/ 前綴已去掉', models[0].id);
+}
+
+/* ================= 10. 跨頁句子 ================= */
+
+log('\n【10】跨頁的句子只翻一次，且兩半一起理解');
+{
+  settings.provider = 'claude';
+
+  // 第 1 頁最後一段沒有句號 → 話還沒說完，接到第 2 頁開頭
+  const pA = { ...page, id: db.uid('pg_'), index: 20, vertical: true };
+  const pB = { ...page, id: db.uid('pg_'), index: 21, vertical: true };
+  await db.putMany('pages', [pA, pB]);
+
+  const aTail = mk({ pageId: pA.id, order: 0, bbox: [100, 100, 60, 900], fontSize: 30,
+                     srcText: '吾輩はここで始めて人間という' });
+  const bHead = mk({ pageId: pB.id, order: 0, bbox: [700, 100, 60, 900], fontSize: 30,
+                     srcText: 'ものを見た。' });
+  const bRest = mk({ pageId: pB.id, order: 1, bbox: [600, 100, 60, 900], fontSize: 30,
+                     srcText: 'しかもあとで聞くとそれは書生であった。' });
+  await db.putMany('blocks', [aTail, bHead, bRest]);
+
+  ok(flowsInto(aTail, bHead), '沒有句號 → 判定為接續下一頁');
+  ok(!flowsInto(bHead, bRest), '有句號 → 不判定為接續');
+
+  // 翻第 1 頁時應該把第 2 頁開頭那一段一起借過來
+  cannedTool = {
+    blocks: [
+      { id: aTail.id, kind: 'body', translation: '我在這裡第一次見到' },
+      { id: bHead.id, kind: 'body', translation: '人類這種東西。' },
+    ],
+    glossary: [],
+  };
+  const rA = await translatePage(pA);
+
+  ok(rA.carried === 1, '借了一段過來', String(rA.carried));
+  const sent = lastRequest.messages[0].content;
+  ok(sent.includes(bHead.id), '下一頁的開頭段落有一起送出');
+  ok(/接續下一頁/.test(sent), '有標明哪一段是跨頁的');
+
+  const afterB = await db.get('blocks', bHead.id);
+  ok(afterB.dstText === '人類這種東西。', '借來的那段譯文寫回它自己那一頁',
+     afterB.dstText);
+
+  // 第 2 頁再翻時，那一段已完成，不該重複送出
+  cannedTool = {
+    blocks: [{ id: bRest.id, kind: 'body', translation: '而且後來才聽說那是個書生。' }],
+    glossary: [],
+  };
+  const rB = await translatePage(pB);
+  const sentB = lastRequest.messages[0].content;
+  ok(!sentB.includes(bHead.id), '已翻過的那段沒有再送一次');
+  ok(!sentB.includes('ものを見た'), '原文也沒有重複出現');
+
+  const finalB = await db.get('blocks', bHead.id);
+  ok(finalB.dstText === '人類這種東西。', '譯文沒有被第二次翻譯覆蓋', finalB.dstText);
+
+  const pageB = await db.get('pages', pB.id);
+  ok(pageB.status === 'translated', '第 2 頁狀態正常', pageB.status);
+}
+
+log('\n【10b】標題與圖說不參與跨頁相連');
+{
+  const t = { kind: 'title', srcText: '第一章', skipTranslate: false };
+  const b = { kind: 'body', srcText: 'つづき', skipTranslate: false };
+  ok(!flowsInto(t, b), '標題不接續下一頁');
+  ok(!flowsInto(b, { kind: 'caption', srcText: '図1', skipTranslate: false }),
+     '圖說不接續');
+  ok(!flowsInto({ kind: 'body', srcText: 'つづく', skipTranslate: false },
+                { kind: 'body', srcText: '「そうか」', skipTranslate: false }),
+     '下一段以起始括號開頭時不算接續');
 }
 
 /* ---------- 收尾 ---------- */

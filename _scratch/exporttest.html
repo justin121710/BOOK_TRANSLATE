@@ -131,6 +131,74 @@ const ms = performance.now() - t0;
 ok(pdfBlob.size > 0, 'PDF 有產出', `${(pdfBlob.size/1024).toFixed(0)}KB / ${Math.round(ms)}ms`);
 log('  提醒：' + (warnings.length ? warnings.map(w => w.message).join('；') : '（無）'));
 
+/* ================= 3b. 圖內文字覆蓋 ================= */
+
+log('\n【3b】圖內文字：蓋掉原字再寫中譯');
+{
+  const W2 = 600, H2 = 400;
+  const c2 = document.createElement('canvas');
+  c2.width = W2; c2.height = H2;
+  const g2 = c2.getContext('2d');
+  g2.fillStyle = '#ffffff'; g2.fillRect(0, 0, W2, H2);
+  // 一張有明顯底色的插圖，塗白會很難看
+  g2.fillStyle = '#2e6f8e'; g2.fillRect(40, 40, 520, 320);
+  // 圖上的日文招牌
+  g2.fillStyle = '#ffffff'; g2.font = 'bold 42px serif';
+  g2.fillText('入口', 240, 220);
+
+  const blob2 = await new Promise(r => c2.toBlob(r, 'image/png'));
+  const proj2 = await db.createProject('__圖內文字測試__');
+  const pg2 = {
+    id: db.uid('pg_'), projectId: proj2.id, index: 0, status: 'translated',
+    source: 'camera', origBlob: blob2, origW: W2, origH: H2,
+    procBlob: blob2, procW: W2, procH: H2,
+    corners: [[0,0],[W2,0],[W2,H2],[0,H2]], vertical: false, nativeText: null,
+  };
+  await db.put('pages', pg2);
+
+  const fig = { id: db.uid('fg_'), pageId: pg2.id, projectId: proj2.id,
+                x: 40, y: 40, w: 520, h: 320 };
+  await db.put('figures', fig);
+
+  const ft = { id: db.uid('bk_'), pageId: pg2.id, projectId: proj2.id, order: 0,
+    kind: 'figuretext', figureId: fig.id, vertical: false,
+    bbox: [236, 180, 92, 52], fontSize: 42,
+    srcText: '入口', dstText: '入口處', skipTranslate: false, lines: [], poly: null };
+  await db.putMany('blocks', [ft]);
+
+  // 取樣到的背景色應該接近插圖底色，而不是白色
+  const { sampleBackground, inkFor } = await import('../src/pdf/figures.js');
+  const bmp2 = await createImageBitmap(blob2);
+  const bg = sampleBackground(bmp2, { x: 236, y: 180, w: 92, h: 52 });
+  ok(bg.b > bg.r + 20, '取樣到插圖的藍色底而不是白色',
+     `rgb(${bg.r},${bg.g},${bg.b})`);
+  const ink = inkFor(bg);
+  ok(ink.r > 0.5, '深底色配淺色文字', JSON.stringify(ink));
+
+  const { blob: pdf2 } = await exportPdf(proj2, [pg2], {});
+  const doc2 = await pdfjs.getDocument({ data: new Uint8Array(await pdf2.arrayBuffer()) }).promise;
+  const page2 = await doc2.getPage(1);
+  const t2 = (await page2.getTextContent()).items.map(i => i.str).join('');
+  ok(t2.includes('入口處'), '中譯有寫進 PDF', t2);
+
+  const vp2 = page2.getViewport({ scale: 1.2 });
+  const rc2 = document.createElement('canvas');
+  rc2.width = vp2.width; rc2.height = vp2.height;
+  const rx = rc2.getContext('2d', { willReadFrequently: true });
+  rx.fillStyle = '#fff'; rx.fillRect(0, 0, rc2.width, rc2.height);
+  await page2.render({ canvasContext: rx, viewport: vp2 }).promise;
+  show(rc2, '圖內文字取代後的 PDF');
+
+  // 覆蓋處不該出現白斑：取文字框附近的像素檢查它仍是藍底
+  const px = rx.getImageData(Math.round(rc2.width * 0.32), Math.round(rc2.height * 0.5), 1, 1).data;
+  ok(px[2] > px[0] + 15, '覆蓋區域仍是插圖底色，沒有白斑',
+     `rgb(${px[0]},${px[1]},${px[2]})`);
+
+  await db.deleteProject(proj2.id);
+  await db.del('pages', pg2.id);
+  bmp2.close?.();
+}
+
 /* ================= 4. 讀回來驗證 ================= */
 
 log('\n【4】用 pdf.js 讀回來');
