@@ -46,6 +46,11 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* [hidden] 的預設 display:none 來自 UA 樣式表，特異性很低，
+   任何自訂的 display（例如 .btn 的 inline-flex）都會蓋過它。
+   這一條把它救回來，否則 hidden 在有樣式的元素上等於沒作用。 */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -113,7 +118,8 @@ body {
   cursor: pointer;
 }
 .icon-btn:active { background: var(--bg-raised); }
-.icon-btn[hidden] { visibility: hidden; display: block; }
+/* 返回鍵藏起來時仍要佔位，不然標題會左右跳動 */
+#navBack[hidden] { display: grid !important; visibility: hidden; }
 
 /* ---------- view ---------- */
 
@@ -422,6 +428,114 @@ input:focus, select:focus, textarea:focus {
   gap: 8px;
 }
 .page-bar-secondary .btn { flex: 1; }
+
+/* ---------- 篩選晶片 ---------- */
+
+.filter-bar {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 6px;
+  margin-top: 10px;
+  scrollbar-width: none;
+}
+.filter-bar::-webkit-scrollbar { display: none; }
+
+.chip {
+  flex: none;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.project-stats { margin-top: 12px; }
+
+/* ---------- 詞彙表 ---------- */
+
+.gloss-pair { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.gloss-ja { color: var(--ink-dim); font-weight: 400; }
+.gloss-arrow { color: var(--ink-faint); font-size: 12px; }
+
+/* ---------- 整本檢視 ---------- */
+
+.review { margin-top: 14px; display: grid; gap: 16px; }
+
+.review-page {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-raised);
+}
+
+.review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-sunken);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 400;
+  color: var(--accent);
+}
+.icon.flip { transform: rotate(180deg); }
+
+.review-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+.review-row:last-child { border-bottom: 0; }
+.review-row .pill { font-size: 11px; align-self: start; }
+
+.review-texts { display: grid; gap: 5px; min-width: 0; }
+
+.review-src {
+  margin: 0;
+  color: var(--ink-faint);
+  line-height: 1.55;
+  word-break: break-all;
+}
+.review-dst {
+  margin: 0;
+  padding-left: 9px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--ink);
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+mark {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
 
 /* ---------- 辨識結果清單 ---------- */
 

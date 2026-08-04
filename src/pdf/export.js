@@ -36,6 +36,7 @@ export async function exportPdf(project, pages, opts = {}) {
 
   const total = pages.length;
   const warnings = [];
+  const overflowUpdates = [];
   const report = (n, note) => opts.onProgress?.(n, total, note);
 
   report(0, '載入字型…');
@@ -192,6 +193,11 @@ export async function exportPdf(project, pages, opts = {}) {
         mathSpans: b.mathSpans,
       });
 
+      /* 溢出的區塊記在資料上，不只是丟一個警告就算了 ——
+         匯出完之後才是使用者要回頭處理它們的時候，得找得到。 */
+      if (laid.overflow !== Boolean(b.overflow)) {
+        overflowUpdates.push({ ...b, overflow: laid.overflow });
+      }
       if (laid.overflow) {
         warnings.push({
           type: 'overflow',
@@ -224,6 +230,8 @@ export async function exportPdf(project, pages, opts = {}) {
     // 讓出主執行緒，手機上整份書才不會把介面凍住
     await new Promise(r => setTimeout(r, 0));
   }
+
+  if (overflowUpdates.length) await db.putMany('blocks', overflowUpdates);
 
   report(total, '寫出檔案…');
   const bytes = await pdf.save();

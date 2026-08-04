@@ -106,7 +106,62 @@ export default async function projectView(root, { id }) {
   const trBtn = action('翻譯', runTranslate, 'translate');
   const pdfBtn = action('匯出 PDF', runExport, 'download');
   pdfBtn.classList.add('btn-primary');
-  runBar.append(ocrBtn, trBtn, pdfBtn);
+
+  /* 批次處理中途要停得下來。
+     底層每一頁之間都會檢查 signal，所以按下去會在當前這一頁做完之後停，
+     已完成的頁面都保留。 */
+  const stopBtn = action('停止', () => {
+    running?.abort();
+    toast('停止中，會在這一頁完成後結束');
+  }, 'stop');
+  stopBtn.classList.add('btn-danger');
+  stopBtn.hidden = true;
+
+  runBar.append(ocrBtn, trBtn, pdfBtn, stopBtn);
+
+  /** @type {AbortController|null} 目前正在跑的批次 */
+  let running = null;
+
+  function startRun() {
+    running = new AbortController();
+    for (const b of [ocrBtn, trBtn, pdfBtn]) b.hidden = true;
+    stopBtn.hidden = false;
+    return running.signal;
+  }
+
+  function endRun() {
+    running = null;
+    for (const b of [ocrBtn, trBtn, pdfBtn]) b.hidden = false;
+    stopBtn.hidden = true;
+  }
+
+  /* ---------- 篩選與統計 ---------- */
+
+  const stats = document.createElement('p');
+  stats.className = 'hint project-stats';
+
+  const filterBar = document.createElement('div');
+  filterBar.className = 'filter-bar';
+  let filter = 'all';
+
+  const FILTERS = [
+    ['all',        '全部'],
+    ['pending',    '待處理'],
+    ['ocr',        '已辨識'],
+    ['translated', '已翻譯'],
+    ['done',       '完成'],
+    ['failed',     '失敗'],
+    ['overflow',   '有溢出'],
+  ];
+
+  for (const [key, label] of FILTERS) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.dataset.filter = key;
+    b.textContent = label;
+    b.addEventListener('click', () => { filter = key; paint(); });
+    filterBar.append(b);
+  }
 
   const grid = document.createElement('div');
   grid.className = 'page-grid';
@@ -117,7 +172,14 @@ export default async function projectView(root, { id }) {
     '還沒有任何頁面。拍書頁時盡量把書壓平、讓整頁都入鏡，' +
     '匯入後可以拖四個角做透視校正。';
 
-  sec.append(head, bar, runBar, empty, grid);
+  const reviewBar = document.createElement('div');
+  reviewBar.className = 'row-gap';
+  reviewBar.append(
+    action('整本檢視', () => go('review', { id: project.id }), 'list'),
+    action('詞彙表', () => go('glossary', { id: project.id }), 'book2'),
+  );
+
+  sec.append(head, bar, runBar, reviewBar, stats, empty, filterBar, grid);
   root.append(sec);
 
   await paint();
@@ -299,7 +361,7 @@ export default async function projectView(root, { id }) {
     const yes = await askConfirm(`辨識 ${todo.length} 頁？`, { detail, okLabel: '開始' });
     if (!yes) return;
 
-    ocrBtn.disabled = true;
+    const signal = startRun();
     const p = pending(`辨識中 0/${todo.length}`);
     let wake = null;
     try {
@@ -308,14 +370,18 @@ export default async function projectView(root, { id }) {
 
       const { recognisePages } = await import('../ocr/index.js');
       const res = await recognisePages(todo, {
+        signal,
         onProgress: (n, total) => p.update(`辨識中 ${n}/${total}`),
       });
 
+      if (res.cost) await db.addSpend(project.id, { visionUnits: res.cost });
+
+      const stopped = signal.aborted;
       if (res.failed) {
-        p.done(`完成 ${res.done} 頁，失敗 ${res.failed} 頁`, 'bad');
+        p.done(`${stopped ? '已停止，' : ''}完成 ${res.done} 頁，失敗 ${res.failed} 頁`, 'bad');
         for (const e of res.errors.slice(0, 3)) bad(`第 ${e.page} 頁：${e.message}`);
       } else {
-        p.done(`已辨識 ${res.done} 頁`, 'ok');
+        p.done(`${stopped ? '已停止，' : ''}已辨識 ${res.done} 頁`, stopped ? '' : 'ok');
       }
       await db.touchProject(project.id);
     } catch (e) {
@@ -323,7 +389,7 @@ export default async function projectView(root, { id }) {
       bad('辨識失敗：' + e.message);
     } finally {
       wake?.release?.().catch(() => {});
-      ocrBtn.disabled = false;
+      endRun();
       paint();
     }
   }
@@ -377,18 +443,23 @@ export default async function projectView(root, { id }) {
     });
     if (!yes) return;
 
-    trBtn.disabled = true;
+    const signal = startRun();
     const p = pending(`翻譯中 0/${todo.length}`);
     let wake = null;
     try {
       wake = await navigator.wakeLock?.request('screen').catch(() => null);
       const res = await tr.translatePages(todo, {
         bookName: project.name,
+        signal,
         onProgress: (n, total, acc) =>
           p.update(`翻譯中 ${n}/${total}　US$${acc.cost.toFixed(3)}`),
       });
 
-      if (res.failed) {
+      if (res.cost) await db.addSpend(project.id, { usd: res.cost });
+
+      if (signal.aborted) {
+        p.done(`已停止，完成 ${res.done} 頁　US$${res.cost.toFixed(3)}`);
+      } else if (res.failed) {
         p.done(`完成 ${res.done} 頁，失敗 ${res.failed} 頁　US$${res.cost.toFixed(3)}`, 'bad');
         for (const e of res.errors.slice(0, 3)) bad(`第 ${e.page} 頁：${e.message}`);
       } else {
@@ -409,7 +480,7 @@ export default async function projectView(root, { id }) {
       bad('翻譯失敗：' + e.message);
     } finally {
       wake?.release?.().catch(() => {});
-      trBtn.disabled = false;
+      endRun();
       paint();
     }
   }
@@ -426,7 +497,7 @@ export default async function projectView(root, { id }) {
     const withOriginal = await askExportOptions(ready.length);
     if (withOriginal === null) return;
 
-    pdfBtn.disabled = true;
+    const signal = startRun();
     const p = pending('準備匯出…');
     let wake = null;
     try {
@@ -435,6 +506,7 @@ export default async function projectView(root, { id }) {
 
       const { blob, warnings } = await exportPdf(project, ready, {
         withOriginal,
+        signal,
         onProgress: (n, total, note) => p.update(`匯出中 ${n}/${total}　${note || ''}`),
       });
 
@@ -452,7 +524,7 @@ export default async function projectView(root, { id }) {
       bad('匯出失敗：' + e.message);
     } finally {
       wake?.release?.().catch(() => {});
-      pdfBtn.disabled = false;
+      endRun();
       paint();
     }
   }
@@ -515,12 +587,41 @@ export default async function projectView(root, { id }) {
 
     const pages = await listPages(project.id);
     empty.hidden = pages.length > 0;
+    filterBar.hidden = pages.length === 0;
     ocrBtn.disabled = pages.length === 0;
     trBtn.disabled = pages.length === 0;
     pdfBtn.disabled = !pages.some(p => p.status === 'translated' || p.status === 'done');
+
+    // 有溢出的頁：匯出時把 overflow 記在區塊上，這裡撈回來當篩選條件
+    const overflowPages = new Set();
+    if (pages.length) {
+      for (const b of await db.getBy('blocks', 'projectId', project.id)) {
+        if (b.overflow) overflowPages.add(b.pageId);
+      }
+    }
+
+    const shown = pages.filter(p =>
+      filter === 'all' ? true
+      : filter === 'overflow' ? overflowPages.has(p.id)
+      : p.status === filter);
+
+    for (const b of filterBar.children) {
+      b.classList.toggle('on', b.dataset.filter === filter);
+    }
+
+    const fresh = await db.get('projects', project.id);
+    const spend = fresh?.spend;
+    stats.textContent = [
+      `${pages.length} 頁`,
+      filter !== 'all' ? `篩選後 ${shown.length} 頁` : '',
+      overflowPages.size ? `${overflowPages.size} 頁有溢出` : '',
+      spend?.usd ? `翻譯累計 US$${spend.usd.toFixed(3)}` : '',
+      spend?.visionUnits ? `辨識累計 ${spend.visionUnits} 頁` : '',
+    ].filter(Boolean).join('　·　');
+
     grid.replaceChildren();
 
-    for (const page of pages) {
+    for (const page of shown) {
       const cell = document.createElement('button');
       cell.className = 'page-cell';
       cell.addEventListener('click', () => go('page', { id: page.id }));

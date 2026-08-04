@@ -151,6 +151,22 @@ export async function touchProject(id) {
   await put('projects', p);
 }
 
+/**
+ * 累加這本書的 API 花費。
+ * 每一批各報各的沒有用 —— 想知道的是整本書總共燒了多少。
+ */
+export async function addSpend(id, { usd = 0, visionUnits = 0 } = {}) {
+  const p = await get('projects', id);
+  if (!p) return null;
+  p.spend = {
+    usd: (p.spend?.usd || 0) + usd,
+    visionUnits: (p.spend?.visionUnits || 0) + visionUnits,
+  };
+  p.updatedAt = Date.now();
+  await put('projects', p);
+  return p.spend;
+}
+
 export async function deleteProject(id) {
   for (const store of ['pages', 'blocks', 'figures', 'glossary']) {
     await delBy(store, 'projectId', id);

@@ -96,7 +96,8 @@ src/
   pdf/fonts.js            字型下載、快取、harfbuzz 子集化、缺字檢查
   pdf/figures.js          圖片區偵測（啟發式，需人工確認）與裁切
   pdf/export.js           產生成品 PDF
-  views/                  home / project / page / settings
+  views/                  home / project / page / review / glossary / settings
+  version.js              版本號（和 sw.js 的 VERSION 要一起改）
 tools/serve.mjs           開發伺服器
 tools/make-icons.mjs      圖示產生器
 _scratch/pdftest.html     瀏覽器端 PDF 產出驗證頁

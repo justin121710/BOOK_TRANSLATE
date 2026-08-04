@@ -69,6 +69,16 @@ const PATHS = {
 
   plus: '<path d="M12 5v14M5 12h14"/>',
 
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+
+  book2:
+    '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>' +
+    '<path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+
+  list:
+    '<path d="M8 6h13M8 12h13M8 18h13"/>' +
+    '<path d="M3 6h.01M3 12h.01M3 18h.01"/>',
+
   download:
     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
     '<path d="M7 10l5 5 5-5M12 15V3"/>',

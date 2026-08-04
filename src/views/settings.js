@@ -8,6 +8,7 @@ import { FONTS, fontStatus, loadFont, dropFont } from '../pdf/fonts.js';
 import * as vision from '../api/vision.js';
 import * as claude from '../api/claude.js';
 import * as gemini from '../api/gemini.js';
+import { VERSION } from '../version.js';
 
 export default function settingsView(root) {
   setTitle('設定');
@@ -236,6 +237,9 @@ export default function settingsView(root) {
       : '這個瀏覽器不提供儲存空間估計';
   }
   paintQuota();
+
+  // 看得到自己在跑哪一版，回報問題時才對得起來
+  $('version').textContent = `版本 ${VERSION}`;
 
   $('wipe').addEventListener('click', async () => {
     const yes = await askConfirm('清除所有本機資料？', {

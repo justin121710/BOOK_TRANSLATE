@@ -2,7 +2,9 @@
  * 只快取 App 殼（HTML / CSS / JS）讓離線時打得開。
  * 字型與 CDN 相依走 runtime cache；API 請求一律不碰。 */
 
-const VERSION = 'v1';
+/* 和 src/version.js 的 VERSION 保持一致。改程式時兩邊要一起改，
+   否則使用者的裝置會繼續吃舊快取。 */
+const VERSION = '2026.08.04-1';
 const SHELL = 'shell-' + VERSION;
 const RUNTIME = 'runtime-' + VERSION;
 
@@ -47,7 +49,10 @@ const SHELL_FILES = [
   './src/views/home.js',
   './src/views/project.js',
   './src/views/page.js',
+  './src/views/review.js',
+  './src/views/glossary.js',
   './src/views/settings.js',
+  './src/version.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -67,6 +72,11 @@ self.addEventListener('activate', (e) => {
       ))
       .then(() => self.clients.claim())
   );
+});
+
+// 使用者按了「重新載入」時，讓新的 worker 立刻接手
+self.addEventListener('message', (e) => {
+  if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('fetch', (e) => {
