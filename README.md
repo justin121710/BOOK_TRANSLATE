@@ -74,6 +74,7 @@ src/
   ui/cropper.js           四角校正編輯器（含放大鏡）
   ui/boxeditor.js         圖片框編輯器（新增、移動、調整、刪除）
   ocr/pagenum.js          頁碼判定（先於模型的確定性規則）
+  ocr/mathspan.js         行內公式偵測與佔位符（公式不進模型）
   input/pages.js          頁面建立與衍生影像
   input/pdfin.js          PDF 匯入與原生文字層抽取
   input/epubin.js         EPUB 解析（章節、段落、剝除 ruby）

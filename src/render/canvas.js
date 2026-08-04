@@ -3,7 +3,7 @@
 
 import { fitText, EM_ASCENT } from './layout.js';
 import { RULE_THICKNESS } from './rules.js';
-import { sampleBackground, inkFor, figureOf } from '../pdf/figures.js';
+import { sampleBackground, inkFor, figureOf, isEquation } from '../pdf/figures.js';
 
 /**
  * @param {CanvasRenderingContext2D} ctx
@@ -20,6 +20,21 @@ export function drawGlyphs(ctx, glyphs, opts = {}) {
   ctx.textAlign = 'left';
 
   for (const g of glyphs) {
+    // 行內公式：從原書裁下來的那一小塊，直接畫進文字流
+    if (g.math) {
+      if (opts.image) {
+        const [mx, my, mw, mh] = g.math.bbox;
+        ctx.drawImage(opts.image, mx, my, mw, mh, g.x, g.y, g.width, g.height);
+      } else {
+        // 沒有原圖可裁時畫個框，至少看得出這裡有東西
+        ctx.save();
+        ctx.strokeStyle = 'rgba(140,140,140,.6)';
+        ctx.strokeRect(g.x, g.y, g.width, g.height);
+        ctx.restore();
+      }
+      continue;
+    }
+
     ctx.font = `${g.size}px ${family}`;
     const baseline = g.y + g.size * EM_ASCENT;
 
@@ -92,8 +107,12 @@ export function renderPage(size, blocks, opts = {}) {
     /* 圖內文字：蓋掉原字再寫上中譯，和 PDF 匯出的處理一致。
        同樣依當下的圖片框重新判定，不是只看資料庫裡的 kind。
        取樣必須在插圖已經畫上去之後才做，不然取到的是白底。 */
+    const hitBox = opts.image ? figureOf(b, opts.figures) : null;
+    // 方程式框整塊原樣貼回，裡面的文字不重畫
+    if (isEquation(hitBox)) continue;
+
     let ink = null;
-    if (opts.image && figureOf(b, opts.figures)) {
+    if (hitBox) {
       const bg = sampleBackground(opts.image, box);
       const pad = Math.max(3, b.fontSize * 0.2);
       ctx.fillStyle = `rgb(${bg.r},${bg.g},${bg.b})`;
@@ -106,6 +125,7 @@ export function renderPage(size, blocks, opts = {}) {
       vertical: b.vertical,
       size: b.fontSize,
       indent: b.indent,
+      mathSpans: b.mathSpans,
     });
 
     if (opts.showBoxes) {
@@ -116,7 +136,9 @@ export function renderPage(size, blocks, opts = {}) {
       ctx.restore();
     }
 
-    drawGlyphs(ctx, laid.glyphs, { fontFamily: opts.fontFamily, color: ink });
+    drawGlyphs(ctx, laid.glyphs, {
+      fontFamily: opts.fontFamily, color: ink, image: opts.image,
+    });
     report.push({
       id: b.id, kind: b.kind,
       scale: laid.scale, overflow: laid.overflow, lines: laid.lines,

@@ -7,6 +7,7 @@
  */
 
 import { placement, segment, breakLines, HALF_WIDTH_IN_VERTICAL, RULE_CHARS } from './rules.js';
+import { splitByMath } from '../ocr/mathspan.js';
 
 /**
  * 字面框頂端到基線的距離，以字身為單位。
@@ -19,6 +20,31 @@ import { placement, segment, breakLines, HALF_WIDTH_IN_VERTICAL, RULE_CHARS } fr
  * Noto CJK 約 1.16 em，和 PDF 的排版基準不一致。
  */
 export const EM_ASCENT = 0.88;
+
+/**
+ * 把一段文字切成排版單元，並把公式佔位符換成「內嵌圖」單元。
+ *
+ * 一個公式佔幾格由它的長寬比決定：圖高對齊字身，寬度換算成幾個字格，
+ * 這樣公式會跟著行的字級縮放，和周圍的中文對得起來。
+ */
+function unitsOf(text, spans, size) {
+  const out = [];
+  for (const part of splitByMath(text, spans)) {
+    if (part.math) {
+      const [, , mw, mh] = part.math.bbox;
+      const ratio = mh > 0 ? mw / mh : 1;
+      // 至少佔一格，免得極窄的符號被壓成看不見
+      const cells = Math.max(1, Math.round(ratio));
+      out.push({ text: '', math: part.math, cells, tate: false });
+      continue;
+    }
+    for (const u of segment(part.text)) out.push({ ...u, cells: 1 });
+  }
+  return out;
+}
+
+/** 一串排版單元共佔幾格。 */
+const cellsOf = (units) => units.reduce((s, u) => s + (u.cells || 1), 0);
 
 /**
  * @typedef {object} Glyph
@@ -58,7 +84,7 @@ export function layoutVertical(text, box, opts) {
   for (const para of paragraphs) {
     if (!para) { col++; continue; }               // 空行也要佔一欄，段落間距才對
 
-    const units = segment(para);
+    const units = unitsOf(para, opts.mathSpans, size);
     // 縮排會吃掉第一欄的可用字數，斷欄要據此計算，否則第一欄會排到框外
     const starts = indent
       ? breakLinesWithIndent(units, perLine, indent)
@@ -75,6 +101,17 @@ export function layoutVertical(text, box, opts) {
 
       for (let i = from; i < to; i++) {
         const u = units[i];
+
+        // 行內公式：從原書裁下來的小圖，佔 cells 格
+        if (u.math) {
+          const span = u.cells * advance - letterGap;
+          glyphs.push({
+            math: u.math, x: cx, y: cy, size,
+            width: size, height: span,     // 直排時圖是直著佔一段長度
+          });
+          cy += u.cells * advance;
+          continue;
+        }
 
         // 破折號與連接線畫成實心長條，逐字旋轉會在相鄰兩個之間留下細縫
         if (!u.tate && RULE_CHARS.has(u.text)) {
@@ -126,7 +163,7 @@ export function layoutHorizontal(text, box, opts) {
   for (const para of paragraphs) {
     if (!para) { row++; continue; }
 
-    const units = [...para].map(c => ({ text: c, tate: false }));
+    const units = unitsOf(para, opts.mathSpans, size);
     const starts = indent
       ? breakLinesWithIndent(units, perLine, indent)
       : breakLines(units, perLine);
@@ -139,9 +176,15 @@ export function layoutHorizontal(text, box, opts) {
       const cy = box.y + row * lineHeight;
 
       for (let i = from; i < to; i++) {
-        glyphs.push({
-          text: units[i].text, x: cx, y: cy, size, rotate: false, tate: false,
-        });
+        const u = units[i];
+        if (u.math) {
+          // 行內公式：圖高對齊字身，寬度依原始長寬比
+          const w = u.cells * advance - letterGap;
+          glyphs.push({ math: u.math, x: cx, y: cy, size, width: w, height: size });
+          cx += u.cells * advance;
+          continue;
+        }
+        glyphs.push({ text: u.text, x: cx, y: cy, size, rotate: false, tate: false });
         cx += advance;
       }
       row++;
@@ -157,7 +200,16 @@ export function layoutHorizontal(text, box, opts) {
  * 第一行少了 indent 個位置，其餘行照舊；直接套 breakLines 會讓第一行排到框外。
  */
 function breakLinesWithIndent(units, perLine, indent) {
-  const first = Math.max(1, perLine - indent);
+  // 依格數算第一行放得下幾個單元（公式會佔多格）
+  let used = 0, n = 0;
+  const room = Math.max(1, perLine - indent);
+  while (n < units.length) {
+    const c = units[n].cells || 1;
+    if (used + c > room) break;
+    used += c;
+    n++;
+  }
+  const first = Math.max(1, n);
   if (units.length <= first) return [0];
 
   // 先切出第一行，剩下的照一般規則切，再把索引平移回來
@@ -181,8 +233,9 @@ export function fitText(text, box, opts) {
   const run = vertical ? layoutVertical : layoutHorizontal;
   const minScale = opts.minScale ?? 0.08;
   const indent = Boolean(opts.indent);
+  const mathSpans = opts.mathSpans;
 
-  const full = run(text, box, { size: opts.size, indent });
+  const full = run(text, box, { size: opts.size, indent, mathSpans });
   if (!full.overflow) {
     return { ...full, size: opts.size, scale: 1 };
   }
@@ -191,7 +244,7 @@ export function fitText(text, box, opts) {
   let lo = minScale, hi = 1, best = null;
   for (let i = 0; i < 18; i++) {
     const mid = (lo + hi) / 2;
-    const r = run(text, box, { size: opts.size * mid, indent });
+    const r = run(text, box, { size: opts.size * mid, indent, mathSpans });
     if (r.overflow) {
       hi = mid;
     } else {
@@ -205,7 +258,7 @@ export function fitText(text, box, opts) {
 
   // 縮到下限還是塞不下：照下限排出來，並如實標記溢出，
   // 讓預覽頁能把這一塊標出來給使用者處理，而不是默默截斷。
-  const floor = run(text, box, { size: opts.size * minScale, indent });
+  const floor = run(text, box, { size: opts.size * minScale, indent, mathSpans });
   return { ...floor, size: opts.size * minScale, scale: minScale, overflow: true };
 }
 

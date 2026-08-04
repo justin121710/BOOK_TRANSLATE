@@ -15,7 +15,9 @@ const MIN_SIZE = 12;    // 太小的框沒有意義，直接忽略
  */
 export function boxEditor(image, initial, opts = {}) {
   const iw = image.width, ih = image.height;
-  let rects = (initial || []).map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h }));
+  let rects = (initial || []).map(r => ({
+    x: r.x, y: r.y, w: r.w, h: r.h, kind: r.kind || 'figure',
+  }));
   let selected = -1;
 
   const el = document.createElement('div');
@@ -56,21 +58,26 @@ export function boxEditor(image, initial, opts = {}) {
       const [x, y] = toScreen(r.x, r.y);
       const rw = r.w * scale, rh = r.h * scale;
       const active = i === selected;
+      // 方程式框用紫色，和插圖一眼分得出來
+      const eq = r.kind === 'equation';
+      const hue = eq ? '170,120,235' : '90,160,240';
 
-      ctx.fillStyle = active ? 'rgba(217,164,65,.18)' : 'rgba(80,160,255,.14)';
+      ctx.fillStyle = active ? 'rgba(217,164,65,.18)' : `rgba(${hue},.14)`;
       ctx.fillRect(x, y, rw, rh);
-      ctx.strokeStyle = active ? '#d9a441' : 'rgba(90,160,240,.9)';
+      ctx.strokeStyle = active ? '#d9a441' : `rgba(${hue},.9)`;
       ctx.lineWidth = active ? 2.5 : 1.8;
       ctx.strokeRect(x, y, rw, rh);
 
-      // 編號，和清單對得起來
-      ctx.fillStyle = active ? '#d9a441' : 'rgba(90,160,240,.95)';
-      ctx.fillRect(x, y, 20, 16);
-      ctx.fillStyle = '#fff';
+      // 編號與類型，和清單對得起來
+      const label = `${i + 1}${eq ? ' 式' : ''}`;
       ctx.font = '11px system-ui';
+      const lw = Math.max(20, ctx.measureText(label).width + 10);
+      ctx.fillStyle = active ? '#d9a441' : `rgba(${hue},.95)`;
+      ctx.fillRect(x, y, lw, 16);
+      ctx.fillStyle = '#fff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(String(i + 1), x + 10, y + 8);
+      ctx.fillText(label, x + lw / 2, y + 8);
 
       if (active) {
         for (const [cx, cy] of corners(x, y, rw, rh)) {
@@ -178,6 +185,7 @@ export function boxEditor(image, initial, opts = {}) {
       const r = {
         x: Math.min(x0, x1), y: Math.min(y0, y1),
         w: Math.abs(x1 - x0), h: Math.abs(y1 - y0),
+        kind: opts.defaultKind || 'figure',
       };
       // 只是點一下而不是拖曳，不要留下一個看不見的框
       if (r.w >= MIN_SIZE && r.h >= MIN_SIZE) {
@@ -195,6 +203,7 @@ export function boxEditor(image, initial, opts = {}) {
   const current = () => rects.map(r => ({
     x: Math.round(r.x), y: Math.round(r.y),
     w: Math.round(r.w), h: Math.round(r.h),
+    kind: r.kind || 'figure',
   }));
 
   canvas.addEventListener('pointerdown', onDown);
@@ -217,6 +226,15 @@ export function boxEditor(image, initial, opts = {}) {
       draw();
       opts.onChange?.(current());
       return true;
+    },
+    /** 切換選取的框是插圖還是方程式。 */
+    toggleKind() {
+      if (selected < 0) return null;
+      const r = rects[selected];
+      r.kind = r.kind === 'equation' ? 'figure' : 'equation';
+      draw();
+      opts.onChange?.(current());
+      return r.kind;
     },
     clear() {
       rects = [];

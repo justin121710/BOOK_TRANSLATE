@@ -19,6 +19,7 @@ const SHELL_FILES = [
   './src/ui/icons.js',
   './src/ui/boxeditor.js',
   './src/ocr/pagenum.js',
+  './src/ocr/mathspan.js',
   './src/input/pages.js',
   './src/input/pdfin.js',
   './src/input/epubin.js',

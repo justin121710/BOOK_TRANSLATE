@@ -9,7 +9,8 @@ import { blobToBase64, blobToBitmap } from '../preprocess/enhance.js';
 import { parseVision } from './parse.js';
 import { parseNative } from './native.js';
 import { markPageNumbers } from './pagenum.js';
-import { figureOf } from '../pdf/figures.js';
+import { figureOf, isEquation } from '../pdf/figures.js';
+import { extractMath } from './mathspan.js';
 
 /**
  * 辨識一頁並把文字塊寫進資料庫。
@@ -60,6 +61,19 @@ export async function recognisePage(page, opts = {}) {
   const figures = await db.getBy('figures', 'pageId', page.id);
   const inFigure = markFigureText(parsed.blocks, figures);
 
+  /* 行內公式抽成佔位符，這樣模型碰不到公式內容，
+     而佔位符要擺在中文的哪個位置由模型判斷（見 mathspan.js）。 */
+  let mathCount = 0;
+  for (const b of parsed.blocks) {
+    if (b.skipTranslate) continue;
+    mathCount += extractMath(b);
+  }
+
+  // lines 裡的 words 只是偵測公式的中間產物，不該存進資料庫
+  for (const b of parsed.blocks) {
+    if (b.lines) b.lines = b.lines.map(l => ({ text: l.text, bbox: l.bbox }));
+  }
+
   await db.delBy('blocks', 'pageId', page.id);
 
   const rows = parsed.blocks.map(b => ({
@@ -84,6 +98,7 @@ export async function recognisePage(page, opts = {}) {
     rubyDropped: parsed.rubyDropped,
     pageNumbers: pageNums,
     figureText: inFigure,
+    mathSpans: mathCount,
   };
 }
 
@@ -101,6 +116,18 @@ function markFigureText(blocks, figures) {
     if (b.skipTranslate) continue;
     const hit = figureOf(b, figures);
     if (!hit) continue;
+
+    if (isEquation(hit)) {
+      /* 方程式框：整塊原樣貼回，連送去翻譯都不該送 ——
+         模型看到殘缺的算式很可能會「順手改成合理的樣子」。 */
+      b.kind = 'equation';
+      b.skipTranslate = true;
+      b.dstText = '';
+      b.figureId = hit.id;
+      n++;
+      continue;
+    }
+
     b.kind = 'figuretext';
     b.figureId = hit.id;
     n++;
@@ -113,9 +140,19 @@ function rescale(blocks, k) {
     b.bbox = b.bbox.map(v => v * k);
     b.fontSize *= k;
     if (b.poly) b.poly = b.poly.map(([x, y]) => [x * k, y * k]);
-    for (const l of b.lines) l.bbox = l.bbox.map(v => v * k);
+    for (const l of b.lines) {
+      l.bbox = l.bbox.map(v => v * k);
+      /* 字元級座標也要一起縮。行內公式的偵測跑在 rescale 之後，
+         漏掉這裡的話公式會照 Vision 縮圖的尺度去裁，位置全錯。 */
+      for (const w of l.words || []) {
+        w.box = scaleBox(w.box, k);
+        for (const g of w.glyphs || []) g.box = scaleBox(g.box, k);
+      }
+    }
   }
 }
+
+const scaleBox = (b, k) => ({ x: b.x * k, y: b.y * k, w: b.w * k, h: b.h * k });
 
 /**
  * 依序辨識多頁。每頁獨立成敗，一頁壞掉不影響其他頁。

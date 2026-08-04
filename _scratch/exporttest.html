@@ -238,6 +238,82 @@ log('\n【3b】圖內文字：蓋掉原字再寫中譯');
   bmp2.close?.();
 }
 
+/* ================= 3c. 行內公式與方程式框 ================= */
+
+log('\n【3c】行內公式內嵌小圖、方程式框原樣貼回');
+{
+  const W3 = 700, H3 = 500;
+  const c3 = document.createElement('canvas');
+  c3.width = W3; c3.height = H3;
+  const g3 = c3.getContext('2d');
+  g3.fillStyle = '#fff'; g3.fillRect(0, 0, W3, H3);
+  // 行內公式：在一段文字中間畫一個明顯的紅色符號當標記
+  g3.fillStyle = '#c00'; g3.font = 'bold 26px serif';
+  g3.fillText('Fmax', 300, 120);
+  // 獨立方程式：一整行綠色
+  g3.fillStyle = '#0a6'; g3.font = 'bold 30px serif';
+  g3.fillText('E = mc²', 250, 300);
+
+  const blob3 = await new Promise(r => c3.toBlob(r, 'image/png'));
+  const proj3 = await db.createProject('__公式測試__');
+  const pg3 = {
+    id: db.uid('pg_'), projectId: proj3.id, index: 0, status: 'translated',
+    source: 'camera', origBlob: blob3, origW: W3, origH: H3,
+    procBlob: blob3, procW: W3, procH: H3,
+    corners: [[0,0],[W3,0],[W3,H3],[0,H3]], vertical: false, nativeText: null,
+  };
+  await db.put('pages', pg3);
+
+  // 方程式框
+  const eqBox = { id: db.uid('fg_'), pageId: pg3.id, projectId: proj3.id,
+                  x: 240, y: 265, w: 220, h: 50, kind: 'equation' };
+  await db.put('figures', eqBox);
+
+  const blocks3 = [
+    // 含行內公式佔位符的正文
+    { id: db.uid('bk_'), pageId: pg3.id, projectId: proj3.id, order: 0,
+      kind: 'body', vertical: false, bbox: [60, 95, 560, 40], fontSize: 26,
+      srcText: 'この⟦M1⟧は大きい', dstText: '這個 ⟦M1⟧ 很大',
+      mathSpans: [{ id: 1, src: 'Fmax', bbox: [298, 96, 78, 30] }],
+      skipTranslate: false, lines: [], poly: null },
+    // 方程式框內的文字：不翻譯
+    { id: db.uid('bk_'), pageId: pg3.id, projectId: proj3.id, order: 1,
+      kind: 'equation', vertical: false, bbox: [248, 272, 200, 36], fontSize: 30,
+      srcText: 'E=mc2', dstText: '', skipTranslate: true, lines: [], poly: null },
+  ];
+  await db.putMany('blocks', blocks3);
+
+  const { blob: pdf3 } = await exportPdf(proj3, [pg3], {});
+  const doc3 = await pdfjs.getDocument({ data: new Uint8Array(await pdf3.arrayBuffer()) }).promise;
+  const p3 = await doc3.getPage(1);
+
+  const t3 = (await p3.getTextContent()).items.map(i => i.str).join('');
+  ok(t3.includes('這個') && t3.includes('很大'), '正文有翻譯', t3);
+  ok(!t3.includes('⟦M1⟧'), '佔位符沒有被當成文字印出來', t3);
+  ok(!t3.includes('E=mc2'), '方程式框內的文字沒有被重畫成文字');
+
+  const vp3 = p3.getViewport({ scale: 1.2 });
+  const rc3 = document.createElement('canvas');
+  rc3.width = vp3.width; rc3.height = vp3.height;
+  const rx3 = rc3.getContext('2d', { willReadFrequently: true });
+  rx3.fillStyle = '#fff'; rx3.fillRect(0, 0, rc3.width, rc3.height);
+  await p3.render({ canvasContext: rx3, viewport: vp3 }).promise;
+  show(rc3, '行內公式（紅）與方程式框（綠）');
+
+  // 兩者都應該以圖片的形式出現在頁面上，所以顏色要還在
+  const all = rx3.getImageData(0, 0, rc3.width, rc3.height).data;
+  let red = 0, green = 0;
+  for (let i = 0; i < all.length; i += 4) {
+    if (all[i] > 130 && all[i+1] < 90 && all[i+2] < 90) red++;
+    if (all[i+1] > 110 && all[i] < 110 && all[i+2] < 140) green++;
+  }
+  ok(red > 40, '行內公式以原圖的樣子出現（紅色像素還在）', String(red));
+  ok(green > 40, '方程式整塊原樣貼回（綠色像素還在）', String(green));
+
+  await db.deleteProject(proj3.id);
+  await db.del('pages', pg3.id);
+}
+
 /* ================= 4. 讀回來驗證 ================= */
 
 log('\n【4】用 pdf.js 讀回來');

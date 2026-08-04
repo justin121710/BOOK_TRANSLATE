@@ -162,6 +162,16 @@ function erode(buf, cols, rows) {
  *
  * @returns {object|null} 命中的圖片框
  */
+/**
+ * 圖片框的兩種用途：
+ *   'figure'   插圖。圖內的日文會被蓋掉換成中譯。
+ *   'equation' 獨立成行的方程式。原樣貼回，不翻譯也不覆蓋 ——
+ *              動到裡面的任何一個符號都是錯的。
+ */
+export const BOX_KINDS = { figure: '插圖', equation: '方程式' };
+
+export const isEquation = (f) => f?.kind === 'equation';
+
 export function figureOf(block, figures, threshold = 0.6) {
   if (!figures?.length || !block?.bbox) return null;
   const [bx, by, bw, bh] = block.bbox;

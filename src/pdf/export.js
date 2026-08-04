@@ -13,7 +13,7 @@ import fontkit from '@pdf-lib/fontkit';
 import * as db from '../state/db.js';
 import { settings } from '../state/settings.js';
 import { loadFont, subsetFont, findMissingGlyphs } from './fonts.js';
-import { crop, sampleBackground, inkFor, figureOf } from './figures.js';
+import { crop, sampleBackground, inkFor, figureOf, isEquation } from './figures.js';
 import { processedBlob } from '../input/pages.js';
 import { blobToBitmap, toBlob } from '../preprocess/enhance.js';
 import { fitText, EM_ASCENT } from '../render/layout.js';
@@ -102,6 +102,8 @@ export async function exportPdf(project, pages, opts = {}) {
     // EPUB 那條路沒有掃描影像，凡是要用到影像的步驟都得先確認它存在
     const source = await processedBlob(page);
     const bitmap = source ? await blobToBitmap(source) : null;
+    // 同一頁裡同樣的公式常常重複出現，嵌一次就好
+    const mathCache = new Map();
 
     // 對照模式：原頁掃描放在譯文頁前面
     if (opts.withOriginal && bitmap) {
@@ -133,6 +135,10 @@ export async function exportPdf(project, pages, opts = {}) {
          使用者常常是辨識完才回頭補畫框，只信舊分類的話插圖會連原本的日文
          一起貼回去，中譯再疊上來，兩層字就重在一起。 */
       const inFigure = bitmap && figures.length ? figureOf(b, figures) : null;
+
+      // 方程式框：整塊原樣貼回，裡面的任何符號都不能動，所以文字直接略過
+      if (isEquation(inFigure)) continue;
+
       if (inFigure && b.dstText && !b.skipTranslate) {
         const [bx, by, bw, bh] = b.bbox;
         const bg = sampleBackground(bitmap, { x: bx, y: by, w: bw, h: bh });
@@ -183,6 +189,7 @@ export async function exportPdf(project, pages, opts = {}) {
         size: b.fontSize,
         minScale: settings.minFontScale,
         indent: b.indent,
+        mathSpans: b.mathSpans,
       });
 
       if (laid.overflow) {
@@ -195,6 +202,20 @@ export async function exportPdf(project, pages, opts = {}) {
       }
 
       for (const g of laid.glyphs) {
+        // 行內公式是圖，得先把那一小塊嵌進 PDF 才畫得出來
+        if (g.math) {
+          if (!bitmap) continue;
+          const img = await embedMath(pdf, bitmap, g.math, mathCache);
+          if (img) {
+            out.drawImage(img, {
+              x: g.x * k,
+              y: ph - (g.y + g.height) * k,
+              width: g.width * k,
+              height: g.height * k,
+            });
+          }
+          continue;
+        }
         drawGlyph(out, font, g, k, ph);
       }
     }
@@ -274,6 +295,37 @@ function drawGlyph(page, font, g, k, pageH, ink) {
     y: pageH - baselineTop * k,
     size, font, color,
   });
+}
+
+/**
+ * 把一個行內公式裁下來嵌進 PDF。
+ * 用 PNG 而不是 JPEG：公式是細線條與小字，JPEG 的振鈴雜訊在這種內容上特別明顯。
+ */
+async function embedMath(pdf, bitmap, span, cache) {
+  const key = span.bbox.join(',');
+  if (cache.has(key)) return cache.get(key);
+
+  const [x, y, w, h] = span.bbox;
+  if (w <= 0 || h <= 0) return null;
+
+  try {
+    // 放大兩倍再裁：公式字本來就小，照原尺寸嵌進 PDF 會糊
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * 2));
+    c.height = Math.max(1, Math.round(h * 2));
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, x, y, w, h, 0, 0, c.width, c.height);
+
+    const blob = await toBlob(c, 'image/png');
+    const img = await pdf.embedPng(await blob.arrayBuffer());
+    cache.set(key, img);
+    return img;
+  } catch (e) {
+    console.warn('行內公式嵌入失敗', e);
+    cache.set(key, null);
+    return null;
+  }
 }
 
 function toCanvas(image) {

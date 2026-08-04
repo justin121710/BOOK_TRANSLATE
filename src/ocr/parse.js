@@ -86,7 +86,16 @@ function buildBlock(para, { dropRuby, rubyDropped }) {
     const text = (w.symbols || []).map(s => s.text || '').join('');
     if (!text) return null;
     const lastBreak = w.symbols?.[w.symbols.length - 1]?.property?.detectedBreak?.type;
-    return { text, box, lastBreak };
+
+    /* 保留字元級座標。行內公式要從這裡算出像素範圍才裁得出來，
+       上下標也只能從「字比較小、而且基線偏移」的幾何關係看出來 ——
+       文字層本身沒有這個資訊。 */
+    const glyphs = (w.symbols || []).map(s => {
+      const b = boxOf(s.boundingBox);
+      return b && s.text ? { text: s.text, box: b } : null;
+    }).filter(Boolean);
+
+    return { text, box, lastBreak, glyphs };
   }).filter(Boolean);
 
   if (!words.length) return null;
@@ -126,7 +135,12 @@ function buildBlock(para, { dropRuby, rubyDropped }) {
     dstText: null,
     // 重排時的基準字級。直排量寬、橫排量高，這是原書的字身大小
     fontSize: median,
-    lines: lines.map(l => ({ text: l.text, bbox: [l.box.x, l.box.y, l.box.w, l.box.h] })),
+    // words 只給行內公式偵測用，寫進資料庫之前會被剝掉（見 ocr/index.js）
+    lines: lines.map(l => ({
+      text: l.text,
+      bbox: [l.box.x, l.box.y, l.box.w, l.box.h],
+      words: l.words,
+    })),
     kind: 'body',          // M4 會用 Claude 重新分類
     skipTranslate: false,
     indent: indented,      // 原書段首有縮排，重排時要套中文的兩字縮排
@@ -232,6 +246,7 @@ function groupLines(words, vertical, median) {
     return {
       text: joinWords(g.items),
       box: unionBox(g.items.map(w => w.box)),
+      words: g.items,      // 行內公式偵測要靠字元級座標，這裡把來源帶著走
     };
   });
 }

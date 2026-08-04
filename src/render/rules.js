@@ -130,8 +130,21 @@ export function breakLines(units, perLine) {
   const starts = [0];
   let i = 0;
 
-  while (i + perLine < units.length) {
-    let cut = i + perLine;   // 預設的換欄位置
+  /* 從 i 開始最多能放幾個單元。
+     一般字元佔一格，行內公式會依長寬比佔多格，所以要按格數累計而不是數單元。 */
+  const fit = (from) => {
+    let used = 0, n = 0;
+    while (from + n < units.length) {
+      const c = units[from + n].cells || 1;
+      if (used + c > perLine) break;
+      used += c;
+      n++;
+    }
+    return Math.max(1, n);   // 單一個單元就超寬時仍要放進去，否則會無限迴圈
+  };
+
+  while (i + fit(i) < units.length) {
+    let cut = i + fit(i);   // 預設的換欄位置
 
     // 行首禁則：下一欄的第一個字不能是句號、收尾括號之類的，把切點往前挪
     let guard = 0;
@@ -142,7 +155,7 @@ export function breakLines(units, perLine) {
     while (cut > i + 1 && NO_LINE_END.has(units[cut - 1].text) && guard++ < perLine) cut--;
 
     // 兩條規則互相打架時就放棄調整，硬切總比無限迴圈好
-    if (cut <= i) cut = i + perLine;
+    if (cut <= i) cut = i + fit(i);
 
     starts.push(cut);
     i = cut;

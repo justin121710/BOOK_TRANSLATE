@@ -188,6 +188,62 @@ log('\n【6c】縮排會佔掉第一行的位置，不能排到框外');
      `${bottom.toFixed(1)} vs ${box.h}`);
 }
 
+/* ================= 6d. 行內公式 ================= */
+
+log('\n【6d】行內公式佔格與定位');
+{
+  // 一個寬高比 3:1 的公式，字身 20 → 應該佔 3 格
+  const spans = [{ id: 1, src: 'Fmax', bbox: [0, 0, 60, 20] }];
+  const box = { x: 0, y: 0, w: 400, h: 400 };
+
+  const r = layoutVertical('甲⟦M1⟧乙', box, { size: 20, mathSpans: spans });
+  const maths = r.glyphs.filter(g => g.math);
+  ok(maths.length === 1, '排出一個公式單元', String(maths.length));
+  ok(maths[0].math.src === 'Fmax', '帶著原始內容');
+
+  const texts = r.glyphs.filter(g => !g.math);
+  ok(texts.length === 2, '前後的字仍在', texts.map(g=>g.text).join(''));
+
+  // 直排時公式佔 3 格的長度，後面的字要被推下去
+  const before = texts[0], after = texts[1];
+  ok(after.y - before.y >= 20 * 4 - 1, '公式後面的字被推開 4 格（1+3）',
+     `${before.y} → ${after.y}`);
+  ok(Math.abs(maths[0].height - 20 * 3) < 1, '公式高度等於 3 格',
+     maths[0].height.toFixed(1));
+
+  // 橫排
+  const h = layoutHorizontal('甲⟦M1⟧乙', box, { size: 20, mathSpans: spans });
+  const hm = h.glyphs.filter(g => g.math);
+  const ht = h.glyphs.filter(g => !g.math);
+  ok(hm.length === 1, '橫排也排得出公式');
+  ok(Math.abs(hm[0].width - 20 * 3) < 1, '橫排公式寬度等於 3 格', hm[0].width.toFixed(1));
+  ok(ht[1].x - ht[0].x >= 20 * 4 - 1, '橫排後面的字被推開', `${ht[0].x} → ${ht[1].x}`);
+}
+
+log('\n【6e】公式佔多格時，換行要按格數算');
+{
+  const spans = [{ id: 1, src: 'x', bbox: [0, 0, 80, 20] }];   // 佔 4 格
+  // 一欄剛好 5 格
+  const box = { x: 0, y: 0, w: 400, h: 105 };
+  const r = layoutVertical('甲⟦M1⟧乙丙', box, { size: 20, mathSpans: spans });
+
+  const firstColX = r.glyphs[0].x;
+  const firstCol = r.glyphs.filter(g => Math.abs(g.x - firstColX) < 0.01);
+  // 甲(1) + 公式(4) = 5 格，剛好塞滿；乙丙要換欄
+  ok(firstCol.length === 2, '第一欄只放得下「甲」與公式', String(firstCol.length));
+  ok(r.lines >= 2, '有換欄', String(r.lines));
+
+  const bottom = Math.max(...firstCol.map(g => g.y + (g.height ?? g.size)));
+  ok(bottom <= box.h + 0.01, '沒有超出框', `${bottom.toFixed(1)} vs ${box.h}`);
+}
+
+log('\n【6f】沒有 mathSpans 時佔位符當一般文字');
+{
+  const r = layoutVertical('甲⟦M1⟧乙', { x:0, y:0, w:400, h:400 }, { size: 20 });
+  ok(r.glyphs.every(g => !g.math), '不會憑空冒出公式單元');
+  ok(r.glyphs.length > 3, '佔位符的字元被當成普通字排出來', String(r.glyphs.length));
+}
+
 /* ================= 7. 橫排 ================= */
 
 log('\n【7】橫排');

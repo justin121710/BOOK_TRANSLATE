@@ -12,10 +12,15 @@
 import { parseVision } from '../src/ocr/parse.js';
 import { parseNative } from '../src/ocr/native.js';
 import { looksLikePageNumber, markPageNumbers } from '../src/ocr/pagenum.js';
+import { findMathRuns, extractMath, inlineMath, splitByMath } from '../src/ocr/mathspan.js';
 
 const out = [];
 let fails = 0;
-const log = (s='') => out.push(s);
+// 即時寫進畫面：拋例外時才看得出停在哪一步，不會只剩一片空白
+const log = (s='') => {
+  out.push(s);
+  document.getElementById('log').textContent = out.join('\n');
+};
 const ok = (cond, label, extra='') => {
   if (!cond) fails++;
   log(`${cond ? '  ✓' : '  ✗ 失敗'} ${label}${extra ? '  → ' + extra : ''}`);
@@ -270,6 +275,110 @@ log('\n【8c】markPageNumbers 會標記並清空譯文');
   ok(blocks[0].kind === 'pagenum' && blocks[0].skipTranslate === true, '頁碼被標記');
   ok(blocks[0].dstText === '', '既有的錯誤譯文被清掉', JSON.stringify(blocks[0].dstText));
   ok(blocks[1].kind === 'body' && !blocks[1].skipTranslate, '正文不受影響');
+}
+
+/* ================= 9. 行內公式偵測 ================= */
+
+/**
+ * 造一行橫排的字，可指定某些字元是上標或下標。
+ * 關鍵是「底部」的位置：主字的底部就是基線，
+ * 下標的底部要低於基線、上標的底部要明顯高於基線 —— 這正是偵測的依據。
+ */
+function mathRow(spec, xLeft, yTop, size) {
+  const words = [];
+  const baseline = yTop + size;
+  let x = xLeft;
+  for (const { ch, sup, sub } of spec) {
+    const s = (sup || sub) ? Math.round(size * 0.6) : size;
+    const bottom = sup ? baseline - size * 0.45
+                 : sub ? baseline + size * 0.2
+                 : baseline;
+    const box = { x, y: Math.round(bottom - s), w: s, h: s };
+    words.push({ text: ch, box, glyphs: [{ text: ch, box }] });
+    x += s;
+  }
+  return words;
+}
+const plain = (str, xLeft, yTop, size) =>
+  mathRow([...str].map(ch => ({ ch })), xLeft, yTop, size);
+
+log('\n【9】行內公式：該抓的');
+{
+  // F 之後接小一號且下沉的 max → 下標
+  const words = [
+    ...plain('この', 100, 100, 30),
+    ...mathRow([{ch:'F'},{ch:'m',sub:1},{ch:'a',sub:1},{ch:'x',sub:1}], 160, 100, 30),
+    ...plain('は大きい', 280, 100, 30),
+  ];
+  const runs = findMathRuns(words);
+  ok(runs.length === 1, '抓到一個公式片段', JSON.stringify(runs.map(r=>r.text)));
+  ok(runs[0].text === 'Fmax', '片段內容正確', runs[0].text);
+  ok(runs[0].bbox[2] > 0 && runs[0].bbox[3] > 0, '有算出像素範圍',
+     JSON.stringify(runs[0].bbox.map(Math.round)));
+
+  // 上標
+  const sup = findMathRuns([
+    ...plain('面積は', 100, 100, 30),
+    ...mathRow([{ch:'x'},{ch:'2',sup:1}], 190, 100, 30),
+    ...plain('です', 240, 100, 30),
+  ]);
+  ok(sup.length === 1 && sup[0].text === 'x2', '上標也抓得到', JSON.stringify(sup.map(r=>r.text)));
+
+  // 含運算子
+  const op = findMathRuns([
+    ...plain('ここで', 100, 100, 30),
+    ...plain('a=b', 190, 100, 30),
+    ...plain('とする', 280, 100, 30),
+  ]);
+  ok(op.length === 1 && op[0].text === 'a=b', '含等號的片段抓得到', JSON.stringify(op.map(r=>r.text)));
+
+  // 希臘字母
+  const gk = findMathRuns([...plain('係数', 100, 100, 30), ...plain('σ', 160, 100, 30)]);
+  ok(gk.length === 1 && gk[0].text === 'σ', '單一希臘字母也算公式', JSON.stringify(gk.map(r=>r.text)));
+}
+
+log('\n【9b】行內公式：不該誤抓的');
+{
+  const cases = [
+    ['1923年に', '純年份'],
+    ['PDFファイル', '英文縮寫'],
+    ['第3章では', '章節編號'],
+    ['ABCという', '連續英文字母'],
+  ];
+  for (const [text, why] of cases) {
+    const runs = findMathRuns(plain(text, 100, 100, 30));
+    ok(runs.length === 0, `「${text}」不判為公式（${why}）`,
+       runs.length ? JSON.stringify(runs.map(r=>r.text)) : '');
+  }
+}
+
+log('\n【9c】抽成佔位符與還原');
+{
+  const words = [
+    ...plain('この', 100, 100, 30),
+    ...mathRow([{ch:'F'},{ch:'m',sub:1},{ch:'a',sub:1},{ch:'x',sub:1}], 160, 100, 30),
+    ...plain('は', 280, 100, 30),
+  ];
+  const block = {
+    srcText: 'このFmaxは',
+    lines: [{ text: 'このFmaxは', words }],
+  };
+  const n = extractMath(block);
+  ok(n === 1, '抽出一個公式', String(n));
+  ok(block.srcText === 'この⟦M1⟧は', '原文被換成佔位符', block.srcText);
+  ok(block.mathSpans[0].src === 'Fmax', '原始內容有留著', block.mathSpans[0].src);
+
+  ok(inlineMath(block.srcText, block.mathSpans) === 'このFmaxは',
+     '可以還原回原本的樣子', inlineMath(block.srcText, block.mathSpans));
+
+  // 譯文裡佔位符的位置會不一樣，切割仍要正確
+  const parts = splitByMath('這個 ⟦M1⟧ 很大', block.mathSpans);
+  ok(parts.length === 3, '切成三段', JSON.stringify(parts.map(p => p.math ? '[式]' : p.text)));
+  ok(parts[1].math?.src === 'Fmax', '中間那段是公式');
+
+  // 佔位符對不上時不該炸掉
+  const orphan = splitByMath('缺少對應的 ⟦M9⟧ 記號', block.mathSpans);
+  ok(orphan.every(p => p.text !== undefined || p.math), '孤兒佔位符不會造成錯誤');
 }
 
 /* ---------- 收尾 ---------- */

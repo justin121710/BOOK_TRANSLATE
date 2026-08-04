@@ -5,6 +5,7 @@ import * as db from '../state/db.js';
 import { listPages, applyCorners, deletePage, renumber } from '../input/pages.js';
 import { blobToBitmap } from '../preprocess/enhance.js';
 import { cropper } from '../ui/cropper.js';
+import { inlineMath } from '../ocr/mathspan.js';
 
 const KIND_LABEL = {
   title: '標題', body: '正文', caption: '圖說', note: '註解', quote: '引文',
@@ -169,12 +170,17 @@ export default async function pageView(root, { id }) {
     const tip = document.createElement('p');
     tip.className = 'hint page-info';
     tip.textContent =
-      '在空白處拖曳可新增圖片框，點框選取後可拖角落調整。' +
-      '自動偵測一定會有誤判，這裡的人工確認不能省。';
+      '在空白處拖曳可新增框，點框選取後可拖角落調整。' +
+      '插圖（藍）圖內的日文會被中譯蓋掉；方程式（紫）整塊原樣貼回，一個符號都不動。';
     stage.append(tip);
 
     bar.append(
       btn('取消', '', () => { bitmap.close?.(); showPreview(); }),
+      btn('切換為方程式', '', () => {
+        const k = editor.toggleKind();
+        if (k === null) toast('請先點一個框');
+        else toast(k === 'equation' ? '已設為方程式，整塊原樣貼回' : '已設為插圖');
+      }),
       btn('自動偵測', '', async (e) => {
         e.target.disabled = true;
         const q = pending('偵測中…');
@@ -198,8 +204,11 @@ export default async function pageView(root, { id }) {
           const rows = editor.rects().map(r => ({
             id: db.uid('fg_'), pageId: current.id, projectId: current.projectId, ...r,
           }));
+          // 方程式框會讓框內文字改成不翻譯，那個標記是辨識時打的
+          const eqs = rows.filter(r => r.kind === 'equation').length;
           if (rows.length) await db.putMany('figures', rows);
-          ok(`已儲存 ${rows.length} 個圖片框`);
+          ok(eqs ? `已儲存 ${rows.length} 個框（含 ${eqs} 個方程式）`
+                 : `已儲存 ${rows.length} 個框`);
           bitmap.close?.();
           showPreview();
         } catch (err) {
@@ -351,8 +360,17 @@ export default async function pageView(root, { id }) {
 
     const src = document.createElement('p');
     src.className = 'block-src';
-    src.textContent = b.srcText.replace(/\n/g, '⏎');
+    // 佔位符對使用者沒有意義，顯示時換回原本的公式文字
+    src.textContent = inlineMath(b.srcText, b.mathSpans).replace(/\n/g, '⏎');
     body.append(src);
+
+    if (b.mathSpans?.length) {
+      const m = document.createElement('p');
+      m.className = 'block-note';
+      m.textContent =
+        `偵測到 ${b.mathSpans.length} 個行內公式，匯出時會用原書裁下來的小圖`;
+      body.append(m);
+    }
 
     /* 模型認為 OCR 讀錯字並依前後文修正過。
        要讓使用者看得到修正內容，才判斷得出這個修正該不該接受。 */
@@ -371,7 +389,7 @@ export default async function pageView(root, { id }) {
     } else if (b.kind === 'figuretext' && b.dstText) {
       const dst = document.createElement('p');
       dst.className = 'block-dst';
-      dst.textContent = b.dstText.replace(/\n/g, '⏎');
+      dst.textContent = inlineMath(b.dstText, b.mathSpans).replace(/\n/g, '⏎');
       const note = document.createElement('p');
       note.className = 'block-note';
       note.textContent = '匯出時會蓋掉插圖上的原字，把這段中譯寫上去';
@@ -379,7 +397,7 @@ export default async function pageView(root, { id }) {
     } else if (b.dstText) {
       const dst = document.createElement('p');
       dst.className = 'block-dst';
-      dst.textContent = b.dstText.replace(/\n/g, '⏎');
+      dst.textContent = inlineMath(b.dstText, b.mathSpans).replace(/\n/g, '⏎');
       body.append(dst);
     } else if (b.error) {
       const err = document.createElement('p');
@@ -438,6 +456,16 @@ export default async function pageView(root, { id }) {
    * OCR 認錯字的話，翻譯再怎麼重跑都不會對 —— 得先能改原文。
    */
   async function editSource(b) {
+    if (b.mathSpans?.length) {
+      const yes = await askConfirm('這一塊含有行內公式', {
+        detail:
+          `原文裡的 ⟦M1⟧ 這種記號代表 ${b.mathSpans.length} 個公式圖片。\n` +
+          '編輯時請原樣保留，刪掉的話那個公式就不會出現在成品裡。',
+        okLabel: '繼續編輯',
+      });
+      if (!yes) return;
+    }
+
     const next = await askTextarea('修正原文', {
       value: b.srcText,
       okLabel: '儲存',
