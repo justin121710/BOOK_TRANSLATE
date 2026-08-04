@@ -341,6 +341,15 @@ export default async function pageView(root, { id }) {
     src.textContent = b.srcText.replace(/\n/g, '⏎');
     body.append(src);
 
+    /* 模型認為 OCR 讀錯字並依前後文修正過。
+       要讓使用者看得到修正內容，才判斷得出這個修正該不該接受。 */
+    if (b.srcFixed) {
+      const fix = document.createElement('p');
+      fix.className = 'block-fixed';
+      fix.textContent = 'AI 判讀修正：' + b.srcFixed.replace(/\n/g, '⏎');
+      body.append(fix);
+    }
+
     if (b.skipTranslate) {
       const note = document.createElement('p');
       note.className = 'block-note';
@@ -381,6 +390,18 @@ export default async function pageView(root, { id }) {
       again.textContent = '重跑這一塊';
       again.addEventListener('click', () => retryBlock(b));
       actions.append(again);
+    }
+
+    if (b.srcFixed) {
+      const accept = document.createElement('button');
+      accept.className = 'link';
+      accept.textContent = '採用修正後的原文';
+      accept.addEventListener('click', async () => {
+        await db.put('blocks', { ...b, srcText: b.srcFixed, srcFixed: null });
+        ok('已採用');
+        showPreview();
+      });
+      actions.append(accept);
     }
 
     if (!b.skipTranslate) {

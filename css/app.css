@@ -478,6 +478,16 @@ input:focus, select:focus, textarea:focus {
   line-height: 1.6;
 }
 
+.block-fixed {
+  margin: 0;
+  padding-left: 9px;
+  border-left: 2px solid color-mix(in srgb, var(--warn) 60%, transparent);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--warn);
+  word-break: break-all;
+}
+
 .block-note { margin: 0; font-size: 12px; color: var(--ink-faint); }
 .block-note.bad { color: var(--danger); }
 

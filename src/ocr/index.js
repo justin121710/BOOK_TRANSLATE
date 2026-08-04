@@ -9,6 +9,7 @@ import { blobToBase64, blobToBitmap } from '../preprocess/enhance.js';
 import { parseVision } from './parse.js';
 import { parseNative } from './native.js';
 import { markPageNumbers } from './pagenum.js';
+import { figureOf } from '../pdf/figures.js';
 
 /**
  * 辨識一頁並把文字塊寫進資料庫。
@@ -88,29 +89,21 @@ export async function recognisePage(page, opts = {}) {
 
 /**
  * 把落在圖片框內的文字標成 figuretext，並記下屬於哪一個框。
- * 判定用「重疊面積佔文字塊的比例」而不是中心點：
- * 橫跨圖片邊界的說明文字用中心點判會誤判。
+ *
+ * 這只是提前歸類，好讓翻譯的指令知道那幾塊空間有限、譯文要精簡。
+ * 真正決定「要不要蓋掉原字」的判定在匯出與預覽時會依當下的圖片框再做一次，
+ * 所以使用者事後才補畫框也不會出事。
  */
 function markFigureText(blocks, figures) {
   if (!figures?.length) return 0;
   let n = 0;
-
   for (const b of blocks) {
     if (b.skipTranslate) continue;
-    const [bx, by, bw, bh] = b.bbox;
-    const area = bw * bh;
-    if (area <= 0) continue;
-
-    for (const f of figures) {
-      const ox = Math.max(0, Math.min(bx + bw, f.x + f.w) - Math.max(bx, f.x));
-      const oy = Math.max(0, Math.min(by + bh, f.y + f.h) - Math.max(by, f.y));
-      if ((ox * oy) / area >= 0.6) {
-        b.kind = 'figuretext';
-        b.figureId = f.id;
-        n++;
-        break;
-      }
-    }
+    const hit = figureOf(b, figures);
+    if (!hit) continue;
+    b.kind = 'figuretext';
+    b.figureId = hit.id;
+    n++;
   }
   return n;
 }

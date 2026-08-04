@@ -287,8 +287,8 @@ export default async function projectView(root, { id }) {
       uncorrected ? `\n注意：有 ${uncorrected} 頁還沒做透視校正。拍歪的頁面直接辨識，座標會跟著歪，重排後會對不上。` : '',
       withFigures < todo.length
         ? `\n提醒：有 ${todo.length - withFigures} 頁還沒畫圖片框。` +
-          '框內的文字會被歸成「圖內文字」，匯出時蓋掉原字寫上中譯；' +
-          '沒先畫的話那些字會被當成正文抽出來重排。建議先進單頁畫好再辨識。'
+          '先畫好的話，翻譯時模型會知道那幾塊空間有限、譯文會更精簡。' +
+          '事後補畫也可以，匯出時一樣會蓋掉原字寫上中譯。'
         : '',
     ].filter(Boolean).join('\n');
 

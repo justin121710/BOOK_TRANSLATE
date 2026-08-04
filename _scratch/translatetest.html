@@ -17,7 +17,11 @@ import { translatePage, tailOf } from '../src/translate/index.js';
 
 const out = [];
 let fails = 0;
-const log = (s='') => out.push(s);
+// 即時寫進畫面：卡住時才看得出停在哪一步
+const log = (s='') => {
+  out.push(s);
+  document.getElementById('log').textContent = out.join('\n');
+};
 const ok = (cond, label, extra='') => {
   if (!cond) fails++;
   log(`${cond ? '  ✓' : '  ✗ 失敗'} ${label}${extra ? '  → ' + extra : ''}`);
@@ -346,6 +350,60 @@ log('\n【10b】標題與圖說不參與跨頁相連');
   ok(!flowsInto({ kind: 'body', srcText: 'つづく', skipTranslate: false },
                 { kind: 'body', srcText: '「そうか」', skipTranslate: false }),
      '下一段以起始括號開頭時不算接續');
+}
+
+/* ================= 11. OCR 判讀修正 ================= */
+
+log('\n【11】模型依前後文修正 OCR 讀錯的字');
+{
+  settings.provider = 'claude';
+
+  const pC = { ...page, id: db.uid('pg_'), index: 30 };
+  await db.put('pages', pC);
+  // OCR 把「猫」讀成了「描」
+  const bad_ = mk({ pageId: pC.id, order: 0, bbox: [10, 10, 60, 300], fontSize: 28,
+                    srcText: '吾輩は描である。' });
+  const fine = mk({ pageId: pC.id, order: 1, bbox: [10, 320, 60, 300], fontSize: 28,
+                    srcText: '名前はまだ無い。' });
+  await db.putMany('blocks', [bad_, fine]);
+
+  cannedTool = {
+    blocks: [
+      { id: bad_.id, kind: 'body', translation: '我是貓。',
+        correctedSource: '吾輩は猫である。' },
+      { id: fine.id, kind: 'body', translation: '還沒有名字。' },
+    ],
+    glossary: [],
+  };
+  await translatePage(pC);
+
+  const sent = lastRequest.system;
+  ok(/辨識錯誤|OCR/.test(sent), '指令有說明原文來自 OCR 且可能有錯');
+  ok(/correctedSource/.test(sent), '指令有要求回報修正內容');
+
+  const a = await db.get('blocks', bad_.id);
+  ok(a.dstText === '我是貓。', '依修正後的意思翻譯', a.dstText);
+  ok(a.srcFixed === '吾輩は猫である。', '修正內容有記錄下來', a.srcFixed);
+  ok(a.srcText === '吾輩は描である。',
+     '原文沒有被靜默覆蓋，使用者看得到 OCR 原本讀到什麼', a.srcText);
+
+  const b2 = await db.get('blocks', fine.id);
+  ok(b2.srcFixed === null, '沒有修正的區塊不會留下多餘標記', String(b2.srcFixed));
+
+  // 模型回傳和原文一模一樣的字串時不該算成「修正過」
+  const pD = { ...page, id: db.uid('pg_'), index: 31 };
+  await db.put('pages', pD);
+  const same = mk({ pageId: pD.id, order: 0, bbox: [10, 10, 60, 200], fontSize: 28,
+                    srcText: 'そのまま。' });
+  await db.put('blocks', same);
+  cannedTool = {
+    blocks: [{ id: same.id, kind: 'body', translation: '就這樣。',
+               correctedSource: 'そのまま。' }],
+    glossary: [],
+  };
+  await translatePage(pD);
+  const c = await db.get('blocks', same.id);
+  ok(c.srcFixed === null, '回傳內容與原文相同時視為沒有修正', String(c.srcFixed));
 }
 
 /* ---------- 收尾 ---------- */

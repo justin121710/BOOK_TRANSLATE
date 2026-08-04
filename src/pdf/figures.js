@@ -150,6 +150,33 @@ function erode(buf, cols, rows) {
 }
 
 /**
+ * 這個文字塊是不是落在某個圖片框裡？
+ *
+ * 用「重疊面積佔文字塊的比例」而不是中心點：橫跨圖片邊界的說明文字
+ * 用中心點判會誤判。
+ *
+ * 這件事在辨識時做過一次，但匯出與預覽時必須**再判一次**：
+ * 使用者常常是辨識完才回頭補畫圖片框，那些文字塊在資料庫裡仍記著舊的分類。
+ * 只信資料庫的話，插圖會連同原本的日文一起被貼回去，中譯再疊上去，
+ * 兩層字就重在一起了。
+ *
+ * @returns {object|null} 命中的圖片框
+ */
+export function figureOf(block, figures, threshold = 0.6) {
+  if (!figures?.length || !block?.bbox) return null;
+  const [bx, by, bw, bh] = block.bbox;
+  const area = bw * bh;
+  if (area <= 0) return null;
+
+  for (const f of figures) {
+    const ox = Math.max(0, Math.min(bx + bw, f.x + f.w) - Math.max(bx, f.x));
+    const oy = Math.max(0, Math.min(by + bh, f.y + f.h) - Math.max(by, f.y));
+    if ((ox * oy) / area >= threshold) return f;
+  }
+  return null;
+}
+
+/**
  * 取樣一個矩形四周的背景色。
  *
  * 圖內文字要用「蓋掉再重寫」的方式取代，直接塗白在彩色插圖上會留下一塊突兀的白斑。

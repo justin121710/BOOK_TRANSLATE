@@ -130,6 +130,13 @@ export async function translatePage(page, opts = {}) {
     block.skipTranslate = skip;
     // 這幾類改成從原圖裁切貼回，譯文留空是刻意的
     block.dstText = skip ? '' : (item.translation ?? '');
+
+    /* OCR 讀錯字時模型會依前後文修正。
+       不覆蓋 srcText —— 使用者要看得出原本讀到什麼、模型改成什麼，
+       才判斷得出這個修正該不該接受。 */
+    const fixed = (item.correctedSource || '').trim();
+    block.srcFixed = (fixed && fixed !== block.srcText) ? fixed : null;
+
     writes.push(block);
     if (!skip && block.dstText) translated++;
   }
@@ -247,11 +254,13 @@ export async function retranslateBlock(block, { instruction = '', signal } = {})
   const item = result.blocks?.[0];
   if (!item) throw new ClaudeError('模型沒有回傳結果，請重試', 200);
 
+  const fixed = (item.correctedSource || '').trim();
   const next = {
     ...block,
     kind: item.kind || block.kind,
     skipTranslate: NO_TRANSLATE.has(item.kind || block.kind),
     dstText: NO_TRANSLATE.has(item.kind || block.kind) ? '' : (item.translation ?? ''),
+    srcFixed: (fixed && fixed !== block.srcText) ? fixed : null,
     error: null,
   };
   await db.put('blocks', next);

@@ -13,7 +13,7 @@ import fontkit from '@pdf-lib/fontkit';
 import * as db from '../state/db.js';
 import { settings } from '../state/settings.js';
 import { loadFont, subsetFont, findMissingGlyphs } from './fonts.js';
-import { crop, sampleBackground, inkFor } from './figures.js';
+import { crop, sampleBackground, inkFor, figureOf } from './figures.js';
 import { processedBlob } from '../input/pages.js';
 import { blobToBitmap, toBlob } from '../preprocess/enhance.js';
 import { fitText, EM_ASCENT } from '../render/layout.js';
@@ -127,14 +127,20 @@ export async function exportPdf(project, pages, opts = {}) {
 
     for (const b of blocks) {
       /* 圖內文字：插圖已經貼回去了，這裡把原本的日文蓋掉再把中譯寫上去。
-         直接塗白在彩色插圖上會留下白斑，所以填的是四周取樣來的背景色。 */
-      if (b.kind === 'figuretext' && bitmap && b.dstText) {
+         直接塗白在彩色插圖上會留下白斑，所以填的是四周取樣來的背景色。
+
+         判定依當下的圖片框重新做，不是只看資料庫裡記的 kind ——
+         使用者常常是辨識完才回頭補畫框，只信舊分類的話插圖會連原本的日文
+         一起貼回去，中譯再疊上來，兩層字就重在一起。 */
+      const inFigure = bitmap && figures.length ? figureOf(b, figures) : null;
+      if (inFigure && b.dstText && !b.skipTranslate) {
         const [bx, by, bw, bh] = b.bbox;
         const bg = sampleBackground(bitmap, { x: bx, y: by, w: bw, h: bh });
         const ink = inkFor(bg);
 
-        // 蓋的範圍比文字框大一點，免得原字的邊緣露出來
-        const pad = Math.max(2, b.fontSize * 0.12);
+        // 蓋的範圍比文字框大一點。OCR 的框常常貼著字身，
+        // 粗體字或帶陰影描邊的招牌字容易在邊緣露出殘影
+        const pad = Math.max(3, b.fontSize * 0.2);
         out.drawRectangle({
           x: (bx - pad) * k,
           y: ph - (by + bh + pad) * k,

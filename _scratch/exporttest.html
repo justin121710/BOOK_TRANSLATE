@@ -160,11 +160,18 @@ log('\n【3b】圖內文字：蓋掉原字再寫中譯');
                 x: 40, y: 40, w: 520, h: 320 };
   await db.put('figures', fig);
 
+  /* 刻意把 kind 留成 body：模擬「辨識完才回頭補畫圖片框」的實際情況。
+     這正是先前的 bug —— 只信資料庫裡的舊分類，插圖會連原本的日文一起貼回去，
+     中譯再疊上來，兩層字重在一起。 */
   const ft = { id: db.uid('bk_'), pageId: pg2.id, projectId: proj2.id, order: 0,
-    kind: 'figuretext', figureId: fig.id, vertical: false,
+    kind: 'body', vertical: false,
     bbox: [236, 180, 92, 52], fontSize: 42,
     srcText: '入口', dstText: '入口處', skipTranslate: false, lines: [], poly: null };
   await db.putMany('blocks', [ft]);
+
+  const { figureOf } = await import('../src/pdf/figures.js');
+  ok(Boolean(figureOf(ft, [fig])), '即使 kind 還是 body，仍判定為落在圖片框內');
+  ok(!figureOf({ bbox: [10, 10, 20, 20] }, [fig]), '框外的文字塊不會被誤判');
 
   // 取樣到的背景色應該接近插圖底色，而不是白色
   const { sampleBackground, inkFor } = await import('../src/pdf/figures.js');
@@ -193,6 +200,38 @@ log('\n【3b】圖內文字：蓋掉原字再寫中譯');
   const px = rx.getImageData(Math.round(rc2.width * 0.32), Math.round(rc2.height * 0.5), 1, 1).data;
   ok(px[2] > px[0] + 15, '覆蓋區域仍是插圖底色，沒有白斑',
      `rgb(${px[0]},${px[1]},${px[2]})`);
+
+  /* 原字真的被蓋掉了嗎？
+     日文「入口」印在 rgb(46,111,142) 的底上是白字。若沒被蓋掉，
+     覆蓋區內會同時存在原字與中譯的白色像素，數量會明顯偏多。
+     這裡比對「有覆蓋」與「不覆蓋直接畫原圖」兩者的白色像素數。 */
+  {
+    const x0 = Math.round(rc2.width * (236 - 20) / W2);
+    const y0 = Math.round(rc2.height * (180 - 20) / H2);
+    const w0 = Math.round(rc2.width * (92 + 40) / W2);
+    const h0 = Math.round(rc2.height * (52 + 40) / H2);
+    const region = rx.getImageData(x0, y0, w0, h0).data;
+    let whiteAfter = 0;
+    for (let i = 0; i < region.length; i += 4) {
+      if (region[i] > 200 && region[i + 1] > 200 && region[i + 2] > 200) whiteAfter++;
+    }
+
+    // 同一區域在原圖上的白色像素數（只有日文「入口」）
+    const ref = document.createElement('canvas');
+    ref.width = w0; ref.height = h0;
+    const rfx = ref.getContext('2d', { willReadFrequently: true });
+    rfx.drawImage(bmp2, 236 - 20, 180 - 20, 92 + 40, 52 + 40, 0, 0, w0, h0);
+    const refData = rfx.getImageData(0, 0, w0, h0).data;
+    let whiteBefore = 0;
+    for (let i = 0; i < refData.length; i += 4) {
+      if (refData[i] > 200 && refData[i + 1] > 200 && refData[i + 2] > 200) whiteBefore++;
+    }
+
+    // 中譯「入口處」比原文「入口」多一個字，但若原字沒被蓋掉會是兩者相加
+    ok(whiteAfter < whiteBefore * 1.9,
+       '原本的日文確實被蓋掉了，不是疊在中譯下面',
+       `原圖白點 ${whiteBefore} → 匯出後 ${whiteAfter}`);
+  }
 
   await db.deleteProject(proj2.id);
   await db.del('pages', pg2.id);

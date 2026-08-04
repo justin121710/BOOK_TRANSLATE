@@ -3,7 +3,7 @@
 
 import { fitText, EM_ASCENT } from './layout.js';
 import { RULE_THICKNESS } from './rules.js';
-import { sampleBackground, inkFor } from '../pdf/figures.js';
+import { sampleBackground, inkFor, figureOf } from '../pdf/figures.js';
 
 /**
  * @param {CanvasRenderingContext2D} ctx
@@ -90,11 +90,12 @@ export function renderPage(size, blocks, opts = {}) {
     const box = { x, y, w, h };
 
     /* 圖內文字：蓋掉原字再寫上中譯，和 PDF 匯出的處理一致。
-       這裡的取樣要在插圖已經畫上去之後才做，不然取到的是白底。 */
+       同樣依當下的圖片框重新判定，不是只看資料庫裡的 kind。
+       取樣必須在插圖已經畫上去之後才做，不然取到的是白底。 */
     let ink = null;
-    if (b.kind === 'figuretext' && opts.image) {
+    if (opts.image && figureOf(b, opts.figures)) {
       const bg = sampleBackground(opts.image, box);
-      const pad = Math.max(2, b.fontSize * 0.12);
+      const pad = Math.max(3, b.fontSize * 0.2);
       ctx.fillStyle = `rgb(${bg.r},${bg.g},${bg.b})`;
       ctx.fillRect(x - pad, y - pad, w + pad * 2, h + pad * 2);
       const c = inkFor(bg);
