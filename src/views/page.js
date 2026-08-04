@@ -41,20 +41,30 @@ export default async function pageView(root, { id }) {
   let current = page;
   let showBlocks = true;
 
-  await showPreview();
+  /* 左上角的返回鍵。
+     逐頁翻書時歷史裡塞的全是單頁畫面，走瀏覽器歷史要按很多次才回得到書籍頁，
+     所以檢視模式一律直接回書籍頁。
+     校正、圖片框、排版預覽這幾個子模式則先退回檢視模式，
+     避免一鍵離開把還沒儲存的編輯默默丟掉。 */
+  const toProject = () => go('project', { id: current.projectId });
 
-  return {
+  const nav = {
+    back: toProject,
     teardown() {
       editor?.destroy();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     },
   };
 
+  await showPreview();
+  return nav;
+
   /* ---------- 檢視模式 ---------- */
 
   async function showPreview() {
     editor?.destroy();
     editor = null;
+    nav.back = toProject;
     stage.replaceChildren();
     bar.replaceChildren();
 
@@ -138,6 +148,7 @@ export default async function pageView(root, { id }) {
   async function showFigures() {
     stage.replaceChildren();
     bar.replaceChildren();
+    nav.back = showPreview;    // 子模式：先退回檢視，別把沒存的框丟掉
 
     const p = pending('載入…');
     let bitmap, figures, blocks;
@@ -204,6 +215,7 @@ export default async function pageView(root, { id }) {
   async function showLayoutPreview() {
     stage.replaceChildren();
     bar.replaceChildren();
+    nav.back = showPreview;
 
     const p = pending('排版中…');
     try {
@@ -281,6 +293,7 @@ export default async function pageView(root, { id }) {
   async function showEditor() {
     stage.replaceChildren();
     bar.replaceChildren();
+    nav.back = showPreview;    // 校正到一半按返回時退回檢視，不要直接離開
 
     const p = pending('載入影像…');
     let bitmap;

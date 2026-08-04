@@ -122,7 +122,11 @@ export default async function projectView(root, { id }) {
 
   await paint();
 
-  return { teardown: () => urls.forEach(u => URL.revokeObjectURL(u)) };
+  return {
+    // 從單頁回到這裡時，歷史裡的上一步往往又是單頁，走歷史會彈回去
+    back: () => go('home'),
+    teardown: () => urls.forEach(u => URL.revokeObjectURL(u)),
+  };
 
   /* ---------- 內部 ---------- */
 

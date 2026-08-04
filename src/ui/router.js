@@ -15,7 +15,18 @@ export function go(name, params = {}) {
   location.hash = '#' + name + (q ? '?' + q : '');
 }
 
+/**
+ * 返回。
+ *
+ * 預設走瀏覽器歷史，但視圖可以在回傳物件上放一個 back 函式來覆寫。
+ * 逐頁瀏覽時歷史裡塞的全是單頁畫面，一路按回去要按很多次才回得到書籍頁，
+ * 所以那種情況由視圖自己指定要回哪裡。
+ */
 export function back() {
+  if (typeof current?.back === 'function') {
+    current.back();
+    return;
+  }
   if (history.length > 1) history.back();
   else go('home');
 }
