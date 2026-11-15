@@ -20,11 +20,13 @@ const OCR_BATCH_BYTES = 9_000_000;
 const FONT_BY_LANGUAGE = { 'zh-Hant': 'sans', 'zh-Hans': 'ocrSC', ja: 'ocrJP', en: 'sans' };
 
 export async function makeSearchablePdf(file, {
-  language, watermarkText = '', hideWatermarkLayers = false, allowImageCopy = false, signal, onProgress,
+  language, watermarkText = '', hideWatermarkLayers = false, allowImageCopy = false,
+  signal, onProgress, checkpoint,
 } = {}) {
   const patterns = watermarkPatterns(watermarkText);
   const fontId = FONT_BY_LANGUAGE[language] || 'sans';
   const reader = await openPdf(file);
+  let readerClosed = false;
   try {
     signal?.throwIfAborted();
     let pdf;
@@ -70,12 +72,26 @@ export async function makeSearchablePdf(file, {
     })).length + 1;
     let batch = [];
     let batchBytes = 0;
+    let batchesSinceCleanup = 0;
 
     async function flushBatch() {
-      await recogniseBatch(batch.filter(item => item.request), reader.numPages, onProgress, signal);
+      if (!batch.length) return;
+      const requests = batch.filter(item => item.request);
+      await recogniseBatch(requests, reader.numPages, onProgress, signal);
+      const recognised = requests.map(item => {
+        item.ocr = readRecognition(item.response, item.viewport, item.nativeBoxes, patterns);
+        delete item.response;
+        delete item.request;
+        return { number: item.n, ocr: item.ocr };
+      });
+      if (recognised.length) await checkpoint?.save(recognised);
       for (const item of batch) await finishPage(item);
       batch = [];
       batchBytes = 0;
+      if (++batchesSinceCleanup === 4) {
+        await reader.cleanup();
+        batchesSinceCleanup = 0;
+      }
     }
 
     for (let n = 1; n <= reader.numPages; n++) {
@@ -108,7 +124,8 @@ export async function makeSearchablePdf(file, {
           : extractItems(text, viewport).filter(item => /[\p{L}\p{N}]/u.test(item.str)).map(item => item.bbox);
         let request;
         let copyImage;
-        if (count < NATIVE_TEXT_MIN_CHARS_PER_PAGE) {
+        const ocr = count < NATIVE_TEXT_MIN_CHARS_PER_PAGE ? await checkpoint?.load(n) : undefined;
+        if (count < NATIVE_TEXT_MIN_CHARS_PER_PAGE && !ocr) {
           const image = await renderPage(page, viewport, {
             type: 'image/jpeg', layerConfig: hiddenLayers ? layerConfig : null, signal,
           });
@@ -120,7 +137,8 @@ export async function makeSearchablePdf(file, {
           if (bytes > OCR_BATCH_BYTES) throw new Error('OCR 影像太大，無法送出');
           if (imageCopy && !page.rotate && !hiddenLayers) copyImage = image;
         }
-        item = { n, page, viewport, nativeBoxes, nativeWords, native, count, rebuild, request, copyImage };
+        item = { n, page, viewport, nativeBoxes, nativeWords, native, count, rebuild, request, copyImage, ocr };
+        page.cleanup();
       } catch (error) {
         signal?.throwIfAborted();
         page.cleanup();
@@ -133,10 +151,10 @@ export async function makeSearchablePdf(file, {
     }
     await flushBatch();
 
-    async function finishPage({ n, page, viewport, nativeBoxes, nativeWords, native, count, rebuild, response, copyImage }) {
+    async function finishPage({ n, page, nativeWords, native, count, rebuild, copyImage,
+      ocr = { words: [], matches: [] } }) {
       try {
         signal?.throwIfAborted();
-        const ocr = readRecognition(response, viewport, nativeBoxes, patterns);
         const words = [...nativeWords, ...ocr.words];
         const matches = [...native.matches, ...ocr.matches];
         filteredMatches += matches.length;
@@ -174,6 +192,8 @@ export async function makeSearchablePdf(file, {
     }
 
     signal?.throwIfAborted();
+    await reader.destroy();
+    readerClosed = true;
     const summary = { existingPages, emptyPages, rebuiltPages, filteredMatches, hiddenLayers, preview, imageCopy };
     if (!overlays.length && !rebuiltPages) return { ...summary, blob: file, addedPages: 0, missing: [] };
 
@@ -190,15 +210,17 @@ export async function makeSearchablePdf(file, {
         signal?.throwIfAborted();
         if (writeWords(page, words, font, unsupported)) addedPages++;
         else emptyPages.push(number);
+        if (number % 8 === 0) await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
-    const bytes = await pdf.save({ updateFieldAppearances: false });
+    signal?.throwIfAborted();
+    const bytes = await pdf.save({ updateFieldAppearances: false, objectsPerTick: 20 });
     signal?.throwIfAborted();
     const blob = new Blob([bytes], { type: 'application/pdf' });
     return { ...summary, blob, addedPages, emptyPages: emptyPages.sort((a, b) => a - b), missing };
   } finally {
-    await reader.destroy();
+    if (!readerClosed) await reader.destroy();
   }
 }
 

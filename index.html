@@ -98,7 +98,11 @@
       <button id="searchableStart" type="submit" class="btn btn-primary">開始處理</button>
       <button id="searchableCancel" type="button" class="btn" hidden>停止</button>
     </form>
+    <p id="searchablePending"></p>
     <p id="searchableStatus" role="status"></p>
+    <button id="searchableResume" type="button" class="btn btn-primary" hidden>繼續處理</button>
+    <button id="searchableDiscard" type="button" class="btn" hidden>捨棄未完成的工作</button>
+    <p id="searchableSummary" class="hint"></p>
     <details id="searchablePreview" hidden>
       <summary id="searchablePreviewTitle">預覽浮水印過濾</summary>
       <img id="searchablePreviewImage" class="searchable-preview-image" alt="過濾前的原始頁面">
@@ -107,6 +111,7 @@
       <p id="searchablePreviewText"></p>
     </details>
     <a id="searchableDownload" class="btn" hidden>下載可搜尋 PDF</a>
+    <button id="searchableDeleteOutput" type="button" class="btn" hidden>移除儲存的成品</button>
   </section>
 </template>
 
