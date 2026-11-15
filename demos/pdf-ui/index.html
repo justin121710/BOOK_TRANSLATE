@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BOOK TRANSLATE｜PDF 工具介面提案</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:15px/1.55 system-ui,sans-serif;background:#e9ebeb;color:#172125}button,a,select,input{font:inherit}button,a{touch-action:manipulation}button{cursor:pointer}button:disabled{cursor:default;opacity:.45}button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #5c8dde;outline-offset:3px}
+.studio{max-width:1120px;margin:auto;padding:24px 22px 36px}.switcher{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 18px}.switcher p{margin:0;font-size:13px;font-weight:650}.tabs{display:flex;gap:3px;background:#dce0e0;padding:4px;border-radius:12px}.tabs button{color:#3f4d50;padding:7px 12px;background:transparent;border:0;border-radius:9px;white-space:nowrap;font-size:13px}.tabs [aria-selected=true]{background:#fff;color:#172125;box-shadow:0 1px 3px #0002}
+.app{--ink:#222b27;--soft:#59655e;--surface:#faf9f3;--panel:#fffdf8;--line:#daddd3;--accent:#174b3d;--on:#fff;--tint:#e8efe7;min-height:620px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:24px;overflow:hidden;box-shadow:0 18px 40px #25343015}.app[data-mode=board]{--ink:#dce8f2;--soft:#94a9bf;--surface:#121d2b;--panel:#192738;--line:#34465c;--accent:#adcaff;--on:#102139;--tint:#24364b}.app[data-mode=phone]{--ink:#242339;--soft:#5c5871;--surface:#f4f2fa;--panel:#fff;--line:#ded9e8;--accent:#57469c;--on:#fff;--tint:#eae4fa;max-width:478px;margin:auto}
+header{display:flex;align-items:center;justify-content:space-between;padding:18px 28px;border-bottom:1px solid var(--line)}.brand{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:750;letter-spacing:.08em}.mark{width:35px;height:35px;background:var(--tint);border-radius:11px;display:grid;place-items:center;color:var(--accent)}svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle;flex:none}
+.app button,.app a,.app summary{border-radius:11px}.ghost,.primary,.outline{padding:10px 14px;border:1px solid transparent;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;font-weight:650;line-height:1.35}.ghost{background:transparent;color:var(--soft)}.primary{background:var(--accent);color:var(--on)}.outline{color:var(--ink);background:var(--panel);border-color:var(--line)}.inner{padding:30px 28px 40px}.hero h1{margin:0;font-size:clamp(28px,5vw,46px);line-height:1.13;letter-spacing:-.04em}.hero p{color:var(--soft);margin:9px 0 0}.layout{display:grid;gap:18px;margin-top:25px}.upload,.settings,.results,.progress{border:1px solid var(--line);border-radius:18px;background:var(--panel);padding:20px}.upload{display:flex;align-items:center;gap:15px}.upload.empty{min-height:150px;justify-content:center;border-style:dashed}.upload.empty .file-info{flex:0 1 auto}.file-info{min-width:0;flex:1}.filename{margin:0;font-size:16px;font-weight:750;overflow-wrap:anywhere}.filesub,.status,.footnote{font-size:13px;color:var(--soft);margin:3px 0 0}.file-input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}.file-input:focus-visible + label{outline:3px solid #5c8dde;outline-offset:3px}.file-label{cursor:pointer;white-space:nowrap}.sheetIcon{width:48px;height:48px;border-radius:14px;background:var(--tint);color:var(--accent);display:grid;place-items:center;flex:none}.sheetIcon svg{width:22px;height:22px}
+.work{min-width:0;display:grid;gap:12px}.settings{padding:0 15px}.settings summary,.volumes summary{cursor:pointer;font-weight:650;padding:12px 0}.settings-grid{display:grid;gap:12px;padding:0 0 14px}.cfg{display:grid;gap:4px;color:var(--soft);font-size:13px}.cfg select,.cfg input[type=text]{width:100%;padding:8px 10px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px}.check{display:flex;align-items:center;gap:6px;color:var(--soft);font-size:13px}.action{display:flex;gap:9px;align-items:center}.action .primary{min-width:130px}.result-title,.progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.result-title h2{font-size:17px;margin:0}.result-title span{font-size:13px;color:var(--soft);white-space:nowrap}.empty-data{color:var(--soft);display:flex;align-items:center;gap:8px;margin:12px 0 3px}.final{margin:14px 0 3px;width:100%}.volumes{margin-top:10px;border-top:1px solid var(--line)}.volume{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}.volume:last-child{border-bottom:0}.download{color:var(--accent);padding:5px 7px}.track{height:7px;background:var(--tint);border-radius:999px;overflow:hidden;margin:10px 0 3px}.bar{height:100%;background:var(--accent);transition:width .18s linear}.pct{font-size:13px;font-variant-numeric:tabular-nums;color:var(--soft)}.progress strong{font-size:14px}.rail{display:none}
+[data-mode=focus] .inner{max-width:610px;margin:auto}[data-mode=focus] .hero{text-align:center}[data-mode=focus] .action .primary{flex:1}[data-mode=focus] .upload.empty{flex-direction:column;gap:8px}
+[data-mode=board] .inner{padding:37px 34px}[data-mode=board] .layout{grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);align-items:start}[data-mode=board] .action{justify-content:flex-end}[data-mode=board] .rail{display:flex;gap:0;border-bottom:1px solid var(--line);padding:0 0 14px;margin:0 0 16px;color:var(--soft);list-style:none;font-size:13px}[data-mode=board] .rail li+li:before{content:'→';margin:0 8px;color:var(--soft)}[data-mode=board] .rail .now{color:var(--accent);font-weight:750}[data-mode=board] .upload.empty{justify-content:flex-start}
+[data-mode=phone] .inner{padding:23px 18px 0}[data-mode=phone] header{padding:14px 18px}[data-mode=phone] .layout{gap:13px;margin-top:20px;display:flex;flex-direction:column}[data-mode=phone] .action{padding:13px 18px 15px;background:var(--panel);border-top:1px solid var(--line);margin:15px -18px 0;position:sticky;bottom:0}[data-mode=phone] .action .primary{flex:1}[data-mode=phone] .upload{padding:14px;gap:10px}[data-mode=phone] .upload.empty{min-height:112px}[data-mode=phone] .result-title h2{font-size:16px}[data-mode=phone] .main-action{display:none}
+@media(max-width:660px){.studio{padding:12px 10px 24px}.switcher{gap:6px;flex-wrap:wrap}.switcher p{font-size:12px}.tabs button{padding:6px 8px}.app{border-radius:17px}.inner,[data-mode=board] .inner{padding:24px 15px}.app header{padding:12px 15px}[data-mode=board] .layout{grid-template-columns:1fr}.upload{gap:9px;padding:13px}.sheetIcon{width:38px;height:38px}.upload .outline{padding:8px 9px}.filename{font-size:14px}}
+@media(prefers-reduced-motion:reduce){.bar{transition:none}}
+</style>
+</head>
+<body>
+<div class="studio">
+  <div class="switcher"><p>BOOK TRANSLATE · 介面 Demo</p><div class="tabs" role="tablist" aria-label="介面提案">
+    <button role="tab" id="tab-focus" data-mode="focus" aria-controls="app">A 專注</button>
+    <button role="tab" id="tab-board" data-mode="board" aria-controls="app">B 工作台</button>
+    <button role="tab" id="tab-phone" data-mode="phone" aria-controls="app">C 手機優先</button>
+  </div></div>
+  <main class="app" id="app" role="tabpanel"></main>
+</div>
+<script>
+const glyph={
+ book:'<path d="M4 5h6a2 2 0 012 2v13a3 3 0 00-3-2H4zM20 5h-6a2 2 0 00-2 2v13a3 3 0 013-2h5z"/>',
+ file:'<path d="M6 3h8l4 4v14H6zM14 3v5h5M9 12h6m-6 4h6"/>',
+ down:'<path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/>',
+ arrow:'<path d="M4 12h15m-6-6 6 6-6 6"/>',
+ play:'<path d="m8 5 12 7-12 7z"/>',
+ tune:'<path d="M4 7h16M4 17h16M9 5v4m6 6v4"/>',
+ check:'<path d="m5 12 4 4L19 6"/>'
+};
+const icon=(key)=>'<svg viewBox="0 0 24 24" aria-hidden="true">'+glyph[key]+'</svg>';
+const app=document.querySelector('#app');
+const tabs=[...document.querySelectorAll('[role=tab]')];
+const state={file:null,mode:'focus',phase:'idle',page:0,advanced:false,volumes:false,lang:'zh-Hant',stamp:'',protected:false,hide:false};
+const total=573,part=48;
+const escapeHtml=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+let timer=null;
+const downloadable=()=>state.phase==='done'||state.phase==='merge'?Math.ceil(total/part):Math.floor(state.page/part);
+function selectMode(mode){
+ state.mode=mode;
+ for(const tab of tabs){const selected=tab.dataset.mode===mode;tab.setAttribute('aria-selected',selected);tab.tabIndex=selected?0:-1;}
+ app.dataset.mode=mode;app.setAttribute('aria-labelledby','tab-'+mode);render();
+}
+for(const [i,tab] of tabs.entries()){
+ tab.onclick=()=>selectMode(tab.dataset.mode);
+ tab.onkeydown=event=>{
+  const target={ArrowLeft:(i+2)%3,ArrowRight:(i+1)%3,Home:0,End:2}[event.key];
+  if(target===undefined)return;event.preventDefault();tabs[target].click();tabs[target].focus();
+ };
+}
+function settings(){
+ const langs={'zh-Hant':'繁體中文','zh-Hans':'簡體中文',ja:'日文',en:'英文'};
+ return '<details class="settings" id="advanced" '+(state.advanced?'open':'')+'><summary>'+icon('tune')+' 辨識設定</summary><div class="settings-grid"><label class="cfg">原書語言<select data-pref="lang">'+Object.entries(langs).map(([value,label])=>'<option value="'+value+'" '+(value===state.lang?'selected':'')+'>'+label+'</option>').join('')+'</select></label><label class="cfg">排除浮水印文字<input type="text" data-pref="stamp" placeholder="例：www.example.com" value="'+escapeHtml(state.stamp)+'"></label><label class="check"><input data-pref="hide" type="checkbox" '+(state.hide?'checked':'')+'> OCR 略過標記的浮水印圖層</label><label class="check"><input data-pref="protected" type="checkbox" '+(state.protected?'checked':'')+'> 受保護的 PDF 另存影像副本</label></div></details>';
+}
+function fileBox(){
+ return '<div class="upload '+(!state.file?'empty':'')+'"><div class="sheetIcon">'+icon('file')+'</div><div class="file-info"><p class="filename">'+(state.file?escapeHtml(state.file):'選擇要辨識的 PDF')+'</p>'+(state.file?'<p class="filesub">573 頁 · 模擬</p>':'')+'</div><input type="file" class="file-input" id="pdf-file" accept=".pdf,application/pdf"><label for="pdf-file" class="outline file-label">'+(state.file?'更換':'選擇檔案')+'</label></div>';
+}
+function action(){
+ if(state.phase==='run'||state.phase==='merge')return '<div class="action"><button data-action="pause" class="outline">暫停</button></div>';
+ if(state.phase==='done')return '<div class="action"><button data-action="reset" class="outline">處理另一份 PDF</button></div>';
+ return '<div class="action"><button data-action="run" class="primary" '+(!state.file?'disabled':'')+'>'+icon(state.phase==='pause'?'play':'arrow')+(state.phase==='pause'?'繼續處理':'開始辨識')+'</button></div>';
+}
+function progress(){
+ if(!['run','pause','merge'].includes(state.phase))return '';
+ const percent=Math.round(100*state.page/total);
+ const title=state.phase==='merge'?'正在合併整本 PDF':state.phase==='pause'?'已暫停':'正在辨識';
+ return '<div class="progress" id="progress"><div class="progress-head"><strong>'+title+'</strong><span class="pct">'+state.page+'／'+total+' 頁</span></div><div class="track" role="progressbar" aria-label="辨識頁數" aria-valuemin="0" aria-valuemax="'+total+'" aria-valuenow="'+state.page+'"><div class="bar" style="width:'+percent+'%"></div></div></div>';
+}
+function result(){
+ const count=downloadable();
+ if(state.mode!=='board'&&!count)return '';
+ const rows=Array.from({length:count},(_,i)=>{
+   const from=i*part+1,to=Math.min(total,(i+1)*part);
+   return '<div class="volume"><span>第 '+from+'–'+to+' 頁</span><button class="ghost download" data-download="'+from+'-'+to+'" aria-label="下載第 '+from+' 到 '+to+' 頁">'+icon('down')+'</button></div>';
+ }).join('');
+ const stage=state.phase==='done'?2:['run','pause','merge'].includes(state.phase)?1:0;
+ return '<section class="results"><ol class="rail" aria-label="處理階段">'+['選檔','辨識','下載'].map((x,i)=>'<li class="'+(stage===i?'now':'')+'">'+x+'</li>').join('')+'</ol><div class="result-title"><h2>下載</h2>'+(state.phase==='done'?'<span>'+icon('check')+' 573 頁完成</span>':'')+'</div>'
+ +(state.phase==='done'?'<button class="primary final" data-download="all">'+icon('down')+' 下載整本 PDF</button>':'')
+ +(count?'<details id="volumes" class="volumes" '+(state.volumes?'open':'')+'><summary>分冊（'+count+'）</summary>'+rows+'</details>':'<p class="empty-data">'+icon('file')+' '+(state.file?'分冊完成後可下載':'尚無成品')+'</p>')+'</section>';
+}
+function render(){
+ const active=document.activeElement;
+ const selection=active?.dataset.pref==='stamp'?[active.selectionStart,active.selectionEnd]:null;
+ const focus=app.contains(active)?[active.dataset.action,active.dataset.download,active.dataset.pref,active.id]:null;
+ app.innerHTML='<header><div class="brand"><span class="mark">'+icon('book')+'</span> BOOK TRANSLATE</div><button data-action="sample" class="ghost">試用範例</button></header><div class="inner"><div class="hero"><h1>PDF 加上文字層</h1><p>讓掃描文件可以搜尋與複製。</p></div><div class="layout"><div class="work">'+fileBox()+settings()+progress()+(state.mode!=='phone'?action():'')+'</div>'+result()+'</div>'+(state.mode==='phone'?action():'')+'</div>';
+ const advanced=app.querySelector('#advanced');advanced.ontoggle=()=>{if(advanced.isConnected)state.advanced=advanced.open;};
+ const volumes=app.querySelector('#volumes');if(volumes)volumes.ontoggle=()=>{if(volumes.isConnected)state.volumes=volumes.open;};
+ if(focus){const next=[...app.querySelectorAll('button, input, select, summary')].find(el=>
+  (focus[0]&&el.dataset.action===focus[0])||(focus[1]&&el.dataset.download===focus[1])||(focus[2]&&el.dataset.pref===focus[2])||(focus[3]&&el.id===focus[3]));
+  if(next&&!next.disabled){
+   next.focus({preventScroll:true});
+   if(selection)next.setSelectionRange(...selection);
+  }}
+}
+function begin(file){
+ clearInterval(timer);
+ Object.assign(state,{file,phase:'idle',page:0,volumes:false});render();
+}
+function play(){
+ state.phase=state.page>=total?'merge':'run';let mergeTicks=0;render();
+ timer=setInterval(()=>{
+  if(state.phase==='run'){state.page=Math.min(total,state.page+24);if(state.page===total)state.phase='merge';}
+  else if(++mergeTicks>=4){state.phase='done';state.volumes=false;clearInterval(timer);}
+  render();
+ },130);
+}
+app.addEventListener('change',e=>{
+ if(e.target.id==='pdf-file'&&e.target.files[0])begin(e.target.files[0].name);
+ if(e.target.dataset.pref)state[e.target.dataset.pref]=e.target.type==='checkbox'?e.target.checked:e.target.value;
+});
+app.addEventListener('input',e=>{if(e.target.dataset.pref==='stamp')state.stamp=e.target.value;});
+function samplePdf(tag){
+ const text=tag==='all'?'Sample - complete book (573 pages)':'Sample - volume pages '+tag;
+ const stream='BT /F1 16 Tf 45 145 Td ('+text+') Tj ET';
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 240] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>','<< /Length '+stream.length+' >>\nstream\n'+stream+'\nendstream'];
+ let pdf='%PDF-1.4\n';const offsets=[];
+ objects.forEach((obj,i)=>{offsets.push(pdf.length);pdf+=(i+1)+' 0 obj\n'+obj+'\nendobj\n';});
+ const start=pdf.length;pdf+='xref\n0 6\n0000000000 65535 f \n'+offsets.map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+start+'\n%%EOF\n';
+ const url=URL.createObjectURL(new Blob([pdf],{type:'application/pdf'}));
+ const link=document.createElement('a');link.href=url;link.download='Demo_'+tag+'.pdf';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+app.addEventListener('click',event=>{
+ const button=event.target.closest('button');if(!button)return;
+ if(button.dataset.download)samplePdf(button.dataset.download);
+ if(button.dataset.action==='sample')begin('橋梁工程軟體 MIDAS Civil 使用指南.pdf');
+ if(button.dataset.action==='reset')begin(null);
+ if(button.dataset.action==='run')play();
+ if(button.dataset.action==='pause'){clearInterval(timer);state.phase='pause';render();}
+});
+selectMode('focus');
+</script>
+</body>
+</html>
