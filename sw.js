@@ -4,7 +4,7 @@
 
 /* 和 src/version.js 的 VERSION 保持一致。改程式時兩邊要一起改，
    否則使用者的裝置會繼續吃舊快取。 */
-const VERSION = '2026.08.04-1';
+const VERSION = '2026.11.15-1';
 const SHELL = 'shell-' + VERSION;
 const RUNTIME = 'runtime-' + VERSION;
 
@@ -31,6 +31,7 @@ const SHELL_FILES = [
   './src/ocr/parse.js',
   './src/ocr/native.js',
   './src/pdf/export.js',
+  './src/pdf/searchable.js',
   './src/pdf/figures.js',
   './src/render/rules.js',
   './src/render/layout.js',
@@ -47,6 +48,7 @@ const SHELL_FILES = [
   './src/api/gemini.js',
   './src/pdf/fonts.js',
   './src/views/home.js',
+  './src/views/searchable.js',
   './src/views/project.js',
   './src/views/page.js',
   './src/views/review.js',

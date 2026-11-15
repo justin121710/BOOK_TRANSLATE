@@ -37,11 +37,25 @@ export const FONTS = {
   },
 };
 
+// 原文 OCR 可依選定語言使用對應字型，不加入翻譯字型設定。
+const OCR_FONTS = {
+  ocrSC: {
+    label: 'Noto Sans SC',
+    url: 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf',
+    approxBytes: 18_000_000,
+  },
+  ocrJP: {
+    label: 'Noto Sans JP',
+    url: 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf',
+    approxBytes: 10_000_000,
+  },
+};
+
 /* ---------- 下載與快取 ---------- */
 
 /** 取得字型原始位元組；已快取就直接回傳，否則下載並寫入 IndexedDB。 */
 export async function loadFont(id, onProgress) {
-  const spec = FONTS[id];
+  const spec = FONTS[id] ?? OCR_FONTS[id];
   if (!spec) throw new Error(`未知的字型代號 ${id}`);
 
   const cached = await db.get('fonts', id);

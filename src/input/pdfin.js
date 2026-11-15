@@ -16,8 +16,8 @@ import { toBlob } from '../preprocess/enhance.js';
 pdfjs.GlobalWorkerOptions.workerSrc =
   'https://esm.sh/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs';
 
-const RENDER_MAX_EDGE = 2400;
-const NATIVE_TEXT_MIN_CHARS_PER_PAGE = 40;   // 低於這個就當作沒有可用的文字層
+export const RENDER_MAX_EDGE = 2400;
+export const NATIVE_TEXT_MIN_CHARS_PER_PAGE = 40;   // 低於這個就當作沒有可用的文字層
 
 export async function openPdf(file) {
   const data = new Uint8Array(await file.arrayBuffer());
@@ -108,7 +108,7 @@ export async function importPdf(projectId, file, opts = {}) {
  * 把 pdf.js 的文字項目轉成畫布像素座標的方框。
  * 這裡輸出的形狀要和 OCR 那條路一致，後面的版面分析才能共用同一套程式。
  */
-function extractItems(textContent, viewport) {
+export function extractItems(textContent, viewport) {
   const out = [];
   for (const it of textContent.items) {
     if (!it.str || !it.str.trim()) continue;

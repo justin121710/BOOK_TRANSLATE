@@ -18,7 +18,7 @@ export class VisionError extends Error {
   }
 }
 
-export async function annotate(requests) {
+export async function annotate(requests, { signal } = {}) {
   const key = settings.googleKey;
   if (!key) throw new VisionError('尚未設定 Google Cloud Vision 金鑰', 0);
 
@@ -26,10 +26,12 @@ export async function annotate(requests) {
   try {
     res = await fetch(`${ENDPOINT}?key=${encodeURIComponent(key)}`, {
       method: 'POST',
+      signal,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ requests }),
     });
   } catch (e) {
+    if (signal?.aborted) throw e;
     throw new VisionError('連不上 Google Cloud Vision，請檢查網路', 0, e.message);
   }
 

@@ -53,6 +53,8 @@
       <button id="newProject" class="btn btn-primary">新增書籍</button>
     </div>
 
+    <p><button type="button" class="btn" data-go="searchable">PDF 加上文字層</button></p>
+
     <ul id="projectList" class="card-list"></ul>
 
     <p id="emptyHint" class="hint" hidden>
@@ -63,6 +65,32 @@
       資料存在這支裝置的瀏覽器裡。請用主畫面的圖示開啟，
       以網頁形式長期不用可能會被系統清除。重要的書請定期備份。
     </p>
+  </section>
+</template>
+
+<template id="tpl-searchable">
+  <section class="view pad">
+    <p>保留原 PDF 的圖表與版面，讓掃描文字可以搜尋與複製。</p>
+    <form>
+      <div class="field">
+        <label for="searchableFile">選擇 PDF</label>
+        <input id="searchableFile" type="file" accept=".pdf,application/pdf" required>
+      </div>
+      <div class="field">
+        <label for="searchableLanguage">原書語言</label>
+        <select id="searchableLanguage">
+          <option value="zh-Hant">繁體中文</option>
+          <option value="zh-Hans">簡體中文</option>
+          <option value="ja">日文</option>
+          <option value="en">英文</option>
+        </select>
+      </div>
+      <p class="hint">需要辨識的頁面會送到 Google Cloud Vision，並使用你設定的金鑰與配額。</p>
+      <button id="searchableStart" type="submit" class="btn btn-primary">開始處理</button>
+      <button id="searchableCancel" type="button" class="btn" hidden>停止</button>
+    </form>
+    <p id="searchableStatus" role="status"></p>
+    <a id="searchableDownload" class="btn" hidden>下載可搜尋 PDF</a>
   </section>
 </template>
 

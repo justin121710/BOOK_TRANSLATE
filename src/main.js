@@ -3,6 +3,7 @@ import { toast, bad } from './ui/toast.js';
 import * as dbmod from './state/db.js';
 
 import home from './views/home.js';
+import searchable from './views/searchable.js';
 import project from './views/project.js';
 import page from './views/page.js';
 import review from './views/review.js';
@@ -10,6 +11,7 @@ import glossaryView from './views/glossary.js';
 import settingsView from './views/settings.js';
 
 route('home', home);
+route('searchable', searchable);
 route('project', project);
 route('page', page);
 route('review', review);

@@ -3,6 +3,9 @@
 把日文書頁掃描進來，OCR 出文字與版面座標，用 Claude 翻成繁體中文，
 再依照原書排版（含直排、右→左欄序）重建成一份全新的 PDF。
 
+首頁也可用「PDF 加上文字層」保留原 PDF 的圖表與原頁版面，加入可搜尋、
+可複製的 OCR 原文。這條路只需 Google Cloud Vision 金鑰，直接輸出原語言 PDF。
+
 行動優先的 PWA，用 Safari 開啟後「分享 → 加到主畫面」就會變成 iPhone 上的 App。
 
 - **[docs/workflow.md](docs/workflow.md)** — 使用流程、已知限制、尚未做的部分
