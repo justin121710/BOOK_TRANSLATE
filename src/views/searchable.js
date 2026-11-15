@@ -22,39 +22,66 @@ export default function searchableView(root) {
   const download = field('Download');
   const remove = field('DeleteOutput');
   let renderedOutput;
-  let outputUrl;
+  const outputUrls = [];
   let previewUrl;
 
   function releaseUrls() {
-    if (outputUrl) URL.revokeObjectURL(outputUrl);
+    for (const url of outputUrls.splice(0)) URL.revokeObjectURL(url);
     if (previewUrl) URL.revokeObjectURL(previewUrl);
-    outputUrl = previewUrl = null;
+    previewUrl = null;
   }
 
   function showOutput() {
-    if (renderedOutput === job.output) return;
-    renderedOutput = job.output;
+    const pendingParts = job.pending?.parts;
+    const showingPending = Boolean(pendingParts?.length);
+    const output = showingPending ? { parts: pendingParts, options: job.pending.options } : job.output;
+    const key = showingPending ? pendingParts : output;
+    if (renderedOutput === key) return;
+    renderedOutput = key;
     releaseUrls();
-    const output = job.output;
+    download.replaceChildren();
     download.hidden = !output;
-    remove.hidden = !output;
+    remove.hidden = !output || showingPending;
     preview.hidden = true;
     previewImage.removeAttribute('src');
     if (!output) {
-      download.removeAttribute('href');
       field('Summary').textContent = '';
       return;
     }
 
-    const { result, options, name } = output;
-    outputUrl = URL.createObjectURL(result.blob);
-    download.href = outputUrl;
-    download.download = name;
-    download.textContent = '下載 ' + name;
+    const { options } = output;
+    // 舊版儲存的是單一 PDF。
+    const parts = output.parts ?? [{ name: output.name, result: output.result }];
+    for (const { name, result } of parts) {
+      const link = document.createElement('a');
+      link.className = 'btn';
+      const url = URL.createObjectURL(result.blob);
+      outputUrls.push(url);
+      link.href = url;
+      link.download = name;
+      link.textContent = '下載 ' + name;
+      const row = document.createElement('p');
+      row.append(link);
+      download.append(row);
+    }
+    const results = parts.map(part => part.result);
+    const sum = key => results.reduce((count, result) => count + result[key], 0);
+    const result = {
+      addedPages: sum('addedPages'), existingPages: sum('existingPages'), filteredMatches: sum('filteredMatches'),
+      hiddenLayers: Math.max(...results.map(result => result.hiddenLayers)),
+      rebuiltPages: sum('rebuiltPages'), imageCopy: results.some(result => result.imageCopy),
+      preview: results.find(result => result.preview)?.preview,
+      emptyPages: results.flatMap(result => result.emptyPages),
+      missing: [...new Set(results.flatMap(result => result.missing))],
+    };
     const notes = [`加入文字層 ${result.addedPages} 頁，沿用既有文字層 ${result.existingPages} 頁。`];
+    if (showingPending && parts[0].range.to < parts[0].range.total) {
+      const { to, total } = parts.at(-1).range;
+      notes.unshift(`已可下載第 1–${to} 頁，共 ${total} 頁。`);
+    }
     if (result.filteredMatches) notes.push(`排除浮水印文字 ${result.filteredMatches} 處。`);
-    else if (options.watermarkText.trim()) notes.push('未比對到輸入的浮水印字樣。');
-    if (options.hideWatermarkLayers) notes.push(`OCR 暫時隱藏 ${result.hiddenLayers} 個標為浮水印的圖層。`);
+    else if (options?.watermarkText?.trim()) notes.push('未比對到輸入的浮水印字樣。');
+    if (options?.hideWatermarkLayers) notes.push(`OCR 暫時隱藏 ${result.hiddenLayers} 個標為浮水印的圖層。`);
     if (result.imageCopy) notes.push(`已將受保護的 PDF 另存為 ${result.rebuiltPages} 頁的未加密影像副本。`);
     else if (result.rebuiltPages) notes.push(`以原頁影像重建 ${result.rebuiltPages} 頁。`);
     if (result.preview) {

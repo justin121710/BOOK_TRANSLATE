@@ -107,26 +107,48 @@ export function runJob(file, options) {
     const pending = job.pending;
     const prefix = pagePrefix(pending.id);
     const { makeSearchablePdf } = await import('../pdf/searchable.js');
-    const result = await makeSearchablePdf(pending.file, {
-      ...pending.options,
-      signal,
-      checkpoint: {
-        load: async number => (await get('meta', prefix + number))?.ocr,
-        save: rows => putMany('meta', rows.map(({ number, ocr }) => ({ key: prefix + number, ocr }))),
-      },
-      onProgress: (page, total, batch) => {
-        if (batch) {
-          const range = page === batch.last ? page : `${page}–${batch.last}`;
-          job.message = `正在辨識第 ${range} 頁（這批 ${batch.count} 張，共 ${total} 頁）…`;
-        } else {
-          job.message = page ? `正在準備第 ${page}／${total} 頁…` : '正在加入文字層並產生 PDF…';
-        }
-        notify();
-      },
-    });
-    signal.throwIfAborted();
-    const name = pending.file.name.replace(/\.pdf$/i, '') + '_可搜尋.pdf';
-    const output = { name, result, options: pending.options };
+    const checkpoint = {
+      load: async number => (await get('meta', prefix + number))?.ocr,
+      save: rows => putMany('meta', rows.map(({ number, ocr }) => ({ key: prefix + number, ocr }))),
+    };
+    const baseName = pending.file.name.replace(/\.pdf$/i, '');
+    let parts = pending.parts ?? [];
+    let last = parts.at(-1);
+    while (!last || last.range.to < last.range.total) {
+      signal.throwIfAborted();
+      const from = (last?.range.to ?? 0) + 1;
+      const result = await makeSearchablePdf(pending.file, {
+        ...pending.options,
+        signal, checkpoint, from, splitLarge: true,
+        onProgress: (page, total, batch) => {
+          if (batch) {
+            const range = page === batch.last ? page : `${page}–${batch.last}`;
+            job.message = `正在辨識第 ${range} 頁（這批 ${batch.count} 張，共 ${total} 頁）…`;
+          } else {
+            job.message = page ? `正在準備第 ${page}／${total} 頁…` : `正在輸出第 ${from} 頁起的 PDF…`;
+          }
+          notify();
+        },
+      });
+      const { range } = result;
+      const suffix = range.from === 1 && range.to === range.total ? '' : `_${range.from}-${range.to}`;
+      last = { name: baseName + '_可搜尋' + suffix + '.pdf', result, range };
+      parts = [...parts, last];
+      job.message = '正在儲存 PDF…';
+      notify();
+      const updated = { ...pending, parts };
+      try {
+        await putMany('meta', [updated]);
+      } catch (error) {
+        job.pending = updated;
+        job.message = '已產生的 PDF 無法寫入儲存空間，請先下載：' + error.message;
+        return;
+      }
+      job.pending = updated;
+      notify();
+    }
+
+    const output = { parts, options: pending.options };
     job.message = '正在儲存完成的 PDF…';
     notify();
     try {

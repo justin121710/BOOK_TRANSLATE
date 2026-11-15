@@ -21,14 +21,26 @@ const FONT_BY_LANGUAGE = { 'zh-Hant': 'sans', 'zh-Hans': 'ocrSC', ja: 'ocrJP', e
 
 export async function makeSearchablePdf(file, {
   language, watermarkText = '', hideWatermarkLayers = false, allowImageCopy = false,
-  signal, onProgress, checkpoint,
+  signal, onProgress, checkpoint, from = 1, splitLarge = false,
 } = {}) {
   const patterns = watermarkPatterns(watermarkText);
   const fontId = FONT_BY_LANGUAGE[language] || 'sans';
   const reader = await openPdf(file);
   let readerClosed = false;
+  let inFlight;
+  const network = new AbortController();
+  const cancelNetwork = () => network.abort();
+  signal?.addEventListener('abort', cancelNetwork, { once: true });
   try {
     signal?.throwIfAborted();
+    const total = reader.numPages;
+    // 長文件及大型影像 PDF 分冊，限制單次寫出的頁面數及估算大小。
+    const maxBytes = 24 * 1024 * 1024;
+    const partSize = splitLarge && (total > 96 || file.size > 2 * maxBytes)
+      ? Math.max(1, Math.min(48, Math.floor(maxBytes * total / file.size))) : total;
+    const to = Math.min(total, from + partSize - 1);
+    const partial = from > 1 || to < total;
+    const range = { from, to, total };
     let pdf;
     let imageCopy = false;
     try {
@@ -43,8 +55,14 @@ export async function makeSearchablePdf(file, {
       pdf = await PDFDocument.create();
       imageCopy = true;
     }
+    if (!imageCopy && pdf.getPageCount() !== total) throw new Error('無法比對原始 PDF 頁數');
+    if (!imageCopy && partial) {
+      const part = await PDFDocument.create();
+      const indexes = Array.from({ length: to - from + 1 }, (_, i) => from - 1 + i);
+      for (const page of await part.copyPages(pdf, indexes)) part.addPage(page);
+      pdf = part;
+    }
     const pages = pdf.getPages();
-    if (!imageCopy && pages.length !== reader.numPages) throw new Error('無法比對原始 PDF 頁數');
 
     const layerConfig = hideWatermarkLayers ? await reader.getOptionalContentConfig() : null;
     let hiddenLayers = 0;
@@ -74,10 +92,9 @@ export async function makeSearchablePdf(file, {
     let batchBytes = 0;
     let batchesSinceCleanup = 0;
 
-    async function flushBatch() {
-      if (!batch.length) return;
-      const requests = batch.filter(item => item.request);
-      await recogniseBatch(requests, reader.numPages, onProgress, signal);
+    async function recogniseAndSave(items) {
+      const requests = items.filter(item => item.request);
+      await recogniseBatch(requests, total, onProgress, network.signal);
       const recognised = requests.map(item => {
         item.ocr = readRecognition(item.response, item.viewport, item.nativeBoxes, patterns);
         delete item.response;
@@ -85,16 +102,32 @@ export async function makeSearchablePdf(file, {
         return { number: item.n, ocr: item.ocr };
       });
       if (recognised.length) await checkpoint?.save(recognised);
-      for (const item of batch) await finishPage(item);
-      batch = [];
-      batchBytes = 0;
+    }
+
+    async function finishBatch() {
+      if (!inFlight) return;
+      const { items, done } = inFlight;
+      const outcome = await done;
+      if (outcome) throw outcome.error;
+      for (const item of items) await finishPage(item);
+      inFlight = null;
       if (++batchesSinceCleanup === 4) {
         await reader.cleanup();
         batchesSinceCleanup = 0;
       }
     }
 
-    for (let n = 1; n <= reader.numPages; n++) {
+    async function flushBatch() {
+      if (!batch.length) return;
+      await finishBatch();
+      // 準備下一批頁面時，前一批可同時上傳和辨識，只保留兩批影像。
+      const items = batch;
+      inFlight = { items, done: recogniseAndSave(items).catch(error => ({ error })) };
+      batch = [];
+      batchBytes = 0;
+    }
+
+    for (let n = from; n <= to; n++) {
       signal?.throwIfAborted();
       onProgress?.(n, reader.numPages);
       const page = await reader.getPage(n);
@@ -150,6 +183,7 @@ export async function makeSearchablePdf(file, {
       if (batch.length === OCR_BATCH_PAGES) await flushBatch();
     }
     await flushBatch();
+    await finishBatch();
 
     async function finishPage({ n, page, nativeWords, native, count, rebuild, copyImage,
       ocr = { words: [], matches: [] } }) {
@@ -167,7 +201,7 @@ export async function makeSearchablePdf(file, {
           };
         }
 
-        let target = pages[n - 1];
+        let target = pages[n - from];
         if (imageCopy) {
           target = await copyPageAsImage(pdf, page, signal, copyImage);
         } else if (rebuild) {
@@ -194,8 +228,8 @@ export async function makeSearchablePdf(file, {
     signal?.throwIfAborted();
     await reader.destroy();
     readerClosed = true;
-    const summary = { existingPages, emptyPages, rebuiltPages, filteredMatches, hiddenLayers, preview, imageCopy };
-    if (!overlays.length && !rebuiltPages) return { ...summary, blob: file, addedPages: 0, missing: [] };
+    const summary = { existingPages, emptyPages, rebuiltPages, filteredMatches, hiddenLayers, preview, imageCopy, range };
+    if (!partial && !overlays.length && !rebuiltPages) return { ...summary, blob: file, addedPages: 0, missing: [] };
 
     onProgress?.();
     const missing = [];
@@ -220,6 +254,9 @@ export async function makeSearchablePdf(file, {
     const blob = new Blob([bytes], { type: 'application/pdf' });
     return { ...summary, blob, addedPages, emptyPages: emptyPages.sort((a, b) => a - b), missing };
   } finally {
+    cancelNetwork();
+    await inFlight?.done;
+    signal?.removeEventListener('abort', cancelNetwork);
     if (!readerClosed) await reader.destroy();
   }
 }
