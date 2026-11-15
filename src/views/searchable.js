@@ -1,5 +1,5 @@
 import { setTitle, tpl } from '../ui/router.js';
-import { changes, deleteOutput, discardJob, job, restoreJob, runJob } from '../state/searchable-job.js';
+import { changes, deleteOutput, discardJob, job, mergeSavedOutput, restoreJob, runJob } from '../state/searchable-job.js';
 
 export default function searchableView(root) {
   setTitle('PDF 加上文字層');
@@ -21,6 +21,7 @@ export default function searchableView(root) {
   const status = field('Status');
   const download = field('Download');
   const remove = field('DeleteOutput');
+  const merge = field('MergeOutput');
   let renderedOutput;
   const outputUrls = [];
   let previewUrl;
@@ -52,17 +53,36 @@ export default function searchableView(root) {
     const { options } = output;
     // 舊版儲存的是單一 PDF。
     const parts = output.parts ?? [{ name: output.name, result: output.result }];
-    for (const { name, result } of parts) {
+    function downloadLink(name, blob, label, primary = false) {
       const link = document.createElement('a');
-      link.className = 'btn';
-      const url = URL.createObjectURL(result.blob);
+      link.className = primary ? 'btn btn-primary' : 'btn';
+      const url = URL.createObjectURL(blob);
       outputUrls.push(url);
       link.href = url;
       link.download = name;
-      link.textContent = '下載 ' + name;
-      const row = document.createElement('p');
-      row.append(link);
-      download.append(row);
+      link.textContent = label;
+      link.title = name;
+      return link;
+    }
+    if (output.final) {
+      download.append(downloadLink(output.final.name, output.final.blob, '下載整本 PDF', true));
+    }
+    if (parts.length > 1 || showingPending) {
+      const volumes = document.createElement('details');
+      volumes.open = !output.final;
+      const title = document.createElement('summary');
+      title.textContent = `分冊下載（${parts.length}）`;
+      volumes.append(title);
+      for (const { name, result, range } of parts) {
+        const row = document.createElement('p');
+        const label = range ? `下載第 ${range.from}–${range.to} 頁` : '下載 ' + name;
+        row.append(downloadLink(name, result.blob, label));
+        volumes.append(row);
+      }
+      download.append(volumes);
+    } else if (!output.final) {
+      const [{ name, result }] = parts;
+      download.append(downloadLink(name, result.blob, '下載 PDF', true));
     }
     const results = parts.map(part => part.result);
     const sum = key => results.reduce((count, result) => count + result[key], 0);
@@ -106,6 +126,8 @@ export default function searchableView(root) {
     cancel.hidden = !busy;
     resume.hidden = discard.hidden = busy || !job.pending;
     remove.disabled = busy;
+    merge.hidden = busy || Boolean(job.pending) || Boolean(job.output?.final) ||
+      (job.output?.parts?.length ?? 0) < 2;
     pendingLabel.textContent = job.pending ? job.pending.file.name : '';
     status.textContent = job.loading ? '正在讀取儲存的工作…' : job.message;
     showOutput();
@@ -115,6 +137,7 @@ export default function searchableView(root) {
   resume.addEventListener('click', () => runJob());
   discard.addEventListener('click', () => discardJob());
   remove.addEventListener('click', () => deleteOutput());
+  merge.addEventListener('click', () => mergeSavedOutput());
   form.addEventListener('submit', event => {
     event.preventDefault();
     const file = fileInput.files?.[0];

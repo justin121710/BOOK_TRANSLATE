@@ -159,6 +159,39 @@ export function runJob(file, options) {
       job.message = 'PDF 已產生，但無法儲存副本。請先下載：' + error.message;
     }
     job.output = output;
+    if (!job.pending && parts.length > 1) await addMergedPdf(output, signal);
+  });
+}
+
+async function addMergedPdf(output, signal) {
+  const { mergeVolumes } = await import('../pdf/merge-volumes.js');
+  const final = {
+    name: output.parts[0].name.replace(/_\d+-\d+\.pdf$/i, '.pdf'),
+    blob: await mergeVolumes(output.parts, {
+      signal,
+      onProgress: (part, total) => {
+        job.message = `正在合併整本 PDF（${part}／${total} 冊）…`;
+        notify();
+      },
+    }),
+  };
+  signal.throwIfAborted();
+  const completed = { ...output, final };
+  job.output = completed;
+  job.message = '正在儲存整本 PDF…';
+  notify();
+  try {
+    await putMany('meta', [{ ...completed, key: OUTPUT }]);
+    job.message = '處理完成。';
+  } catch (error) {
+    job.message = '整本 PDF 已產生，但無法儲存。請先下載：' + error.message;
+  }
+}
+
+export function mergeSavedOutput() {
+  return exclusively(async signal => {
+    const output = await get('meta', OUTPUT);
+    if (output?.parts?.length > 1 && !output.final) await addMergedPdf(output, signal);
   });
 }
 
