@@ -1,6 +1,6 @@
 /* 保留頁面外觀，以 PDF 的不可見文字模式加入可擷取文字。 */
 import {
-  PDFDocument, PDFName, TextRenderingMode, beginText, endText, popGraphicsState,
+  PDFDocument, PDFName, TextRenderingMode, beginText, degrees, endText, popGraphicsState,
   pushGraphicsState, setFontAndSize, setTextMatrix, setTextRenderingMode, showText,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
@@ -16,16 +16,29 @@ import { excludeWatermarks, isWatermarkLayer, sliceWord, watermarkPatterns } fro
 const FONT_BY_LANGUAGE = { 'zh-Hant': 'sans', 'zh-Hans': 'ocrSC', ja: 'ocrJP', en: 'sans' };
 
 export async function makeSearchablePdf(file, {
-  language, watermarkText = '', hideWatermarkLayers = false, signal, onProgress,
+  language, watermarkText = '', hideWatermarkLayers = false, allowImageCopy = false, signal, onProgress,
 } = {}) {
   const patterns = watermarkPatterns(watermarkText);
   const fontId = FONT_BY_LANGUAGE[language] || 'sans';
   const reader = await openPdf(file);
   try {
     signal?.throwIfAborted();
-    const pdf = await PDFDocument.load(await file.arrayBuffer(), { updateMetadata: false });
+    let pdf;
+    let imageCopy = false;
+    try {
+      pdf = await PDFDocument.load(await file.arrayBuffer(), { updateMetadata: false });
+    } catch (error) {
+      signal?.throwIfAborted();
+      // pdf-lib 1.17.1 的加密錯誤會以一般 Error 拋出。
+      if (!error?.message?.startsWith('Input document to `PDFDocument.load` is encrypted.')) throw error;
+      if (!allowImageCopy) {
+        throw new Error('這份 PDF 可以開啟，但無法直接改寫。若要另存可搜尋副本，請勾選「受保護的 PDF 另存為影像副本」');
+      }
+      pdf = await PDFDocument.create();
+      imageCopy = true;
+    }
     const pages = pdf.getPages();
-    if (pages.length !== reader.numPages) throw new Error('無法比對原始 PDF 頁數');
+    if (!imageCopy && pages.length !== reader.numPages) throw new Error('無法比對原始 PDF 頁數');
 
     const layerConfig = hideWatermarkLayers ? await reader.getOptionalContentConfig() : null;
     let hiddenLayers = 0;
@@ -51,7 +64,7 @@ export async function makeSearchablePdf(file, {
         const text = await page.getTextContent();
         const nativeItems = text.items.filter(item => item.str);
         const native = excludeWatermarks(nativeItems.map(item => item.str), patterns);
-        const rebuild = native.matches.length > 0;
+        const rebuild = imageCopy || native.matches.length > 0;
         const count = nativeItems.reduce((sum, item, i) => sum + native.runs[i].reduce(
           (total, { start, end }) => total +
             (item.str.slice(start, end).match(/[\p{L}\p{N}]/gu)?.length ?? 0), 0), 0);
@@ -84,8 +97,13 @@ export async function makeSearchablePdf(file, {
           };
         }
 
+        let target = pages[n - 1];
+        if (imageCopy) {
+          target = await copyPageAsImage(pdf, page, signal);
+        } else if (rebuild) {
+          await rebuildPage(pdf, target, page, signal);
+        }
         if (rebuild) {
-          await rebuildPage(pdf, pages[n - 1], page, signal);
           rebuiltPages++;
         }
         if (!words.length) {
@@ -93,7 +111,7 @@ export async function makeSearchablePdf(file, {
           else emptyPages.push(n);
           continue;
         }
-        overlays.push({ page: pages[n - 1], number: n, words });
+        overlays.push({ page: target, number: n, words });
         for (const { text: word } of words) for (const ch of word) chars.add(ch);
       } catch (error) {
         signal?.throwIfAborted();
@@ -104,7 +122,7 @@ export async function makeSearchablePdf(file, {
     }
 
     signal?.throwIfAborted();
-    const summary = { existingPages, emptyPages, rebuiltPages, filteredMatches, hiddenLayers, preview };
+    const summary = { existingPages, emptyPages, rebuiltPages, filteredMatches, hiddenLayers, preview, imageCopy };
     if (!overlays.length && !rebuiltPages) return { ...summary, blob: file, addedPages: 0, missing: [] };
 
     onProgress?.();
@@ -169,11 +187,32 @@ async function rebuildPage(pdf, target, original, signal) {
   const image = await renderPage(original, viewport, { type: 'image/png', annotationMode: AnnotationMode.DISABLE, signal });
   signal?.throwIfAborted();
   const png = await pdf.embedPng(await image.arrayBuffer());
-  const [x, y, right, top] = original.view;
   target.node.set(PDFName.of('Contents'), pdf.context.obj([]));
   // PDFPage 可能已快取自己的新內容串流；這裡每頁只重建一次，且在寫文字前執行。
+  drawPageImage(target, png, original, viewport);
+}
+
+async function copyPageAsImage(pdf, original, signal) {
+  const viewport = pageViewport(original, RENDER_MAX_EDGE, 3, 0);
+  // 使用原始可見圖層及註記；OCR 專用的浮水印隱藏設定不套用到成品。
+  const blob = await renderPage(original, viewport, { type: 'image/jpeg', signal });
+  signal?.throwIfAborted();
+  const image = await pdf.embedJpg(await blob.arrayBuffer());
+  const [x, y, right, top] = original.view;
+  const target = pdf.addPage([right - x, top - y]);
+  target.setMediaBox(x, y, right - x, top - y);
+  target.setRotation(degrees(original.rotate));
+  if (original.userUnit !== 1) {
+    target.node.set(PDFName.of('UserUnit'), pdf.context.obj(original.userUnit));
+  }
+  drawPageImage(target, image, original, viewport);
+  return target;
+}
+
+function drawPageImage(target, image, original, viewport) {
+  const [x, y, right, top] = original.view;
   const height = (top - y) * Math.ceil(viewport.height) / viewport.height;
-  target.drawImage(png, {
+  target.drawImage(image, {
     x, y: top - height, height,
     width: (right - x) * Math.ceil(viewport.width) / viewport.width,
   });

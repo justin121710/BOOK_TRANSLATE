@@ -8,6 +8,7 @@ export default function searchableView(root) {
   const language = form.querySelector('#searchableLanguage');
   const watermarks = form.querySelector('#searchableWatermarks');
   const hideLayers = form.querySelector('#searchableHideLayers');
+  const imageCopy = form.querySelector('#searchableImageCopy');
   const preview = root.querySelector('#searchablePreview');
   const previewImage = root.querySelector('#searchablePreviewImage');
   const previewTitle = root.querySelector('#searchablePreviewTitle');
@@ -48,7 +49,7 @@ export default function searchableView(root) {
     clearOutput();
     controller = new AbortController();
     const { signal } = controller;
-    fileInput.disabled = language.disabled = watermarks.disabled = hideLayers.disabled = start.disabled = true;
+    fileInput.disabled = language.disabled = watermarks.disabled = hideLayers.disabled = imageCopy.disabled = start.disabled = true;
     cancel.hidden = false;
     status.textContent = '正在開啟 PDF…';
 
@@ -58,6 +59,7 @@ export default function searchableView(root) {
         language: language.value,
         watermarkText: watermarks.value,
         hideWatermarkLayers: hideLayers.checked,
+        allowImageCopy: imageCopy.checked,
         signal,
         onProgress: (page, total) => {
           status.textContent = page ? `正在檢查或辨識第 ${page}／${total} 頁…` : '正在加入文字層…';
@@ -78,7 +80,8 @@ export default function searchableView(root) {
       if (hideLayers.checked) {
         notes.push(`OCR 暫時隱藏 ${result.hiddenLayers} 個標為浮水印的圖層。`);
       }
-      if (result.rebuiltPages) notes.push(`以原頁影像重建 ${result.rebuiltPages} 頁。`);
+      if (result.imageCopy) notes.push(`已將受保護的 PDF 另存為 ${result.rebuiltPages} 頁的未加密影像副本。`);
+      else if (result.rebuiltPages) notes.push(`以原頁影像重建 ${result.rebuiltPages} 頁。`);
       if (result.preview) {
         previewUrl = URL.createObjectURL(result.preview.image);
         previewImage.src = previewUrl;
@@ -96,7 +99,7 @@ export default function searchableView(root) {
       status.textContent = signal.aborted ? '已取消。' : `處理失敗：${error.message}`;
     } finally {
       controller = null;
-      fileInput.disabled = language.disabled = watermarks.disabled = hideLayers.disabled = start.disabled = false;
+      fileInput.disabled = language.disabled = watermarks.disabled = hideLayers.disabled = imageCopy.disabled = start.disabled = false;
       cancel.hidden = true;
     }
   });
