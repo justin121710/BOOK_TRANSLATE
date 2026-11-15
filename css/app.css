@@ -755,3 +755,5 @@ mark {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+.searchable-preview-image { display: block; max-width: 100%; max-height: 24rem; margin-block: 0.75rem; }

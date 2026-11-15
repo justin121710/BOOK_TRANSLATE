@@ -85,11 +85,25 @@
           <option value="en">英文</option>
         </select>
       </div>
+      <div class="field">
+        <label for="searchableWatermarks">排除浮水印文字（選填）</label>
+        <textarea id="searchableWatermarks" rows="3" spellcheck="false" autocomplete="off"
+          aria-describedby="searchableWatermarkHint"></textarea>
+        <p id="searchableWatermarkHint" class="hint">每行填一組完整字樣，會比對整頁。輸出保留浮水印外觀。有符合的既有文字時，該頁會轉為影像並重建可搜尋文字層。</p>
+      </div>
+      <label><input id="searchableHideLayers" type="checkbox"> OCR 時略過標為浮水印的 PDF 圖層</label>
       <p class="hint">需要辨識的頁面會送到 Google Cloud Vision，並使用你設定的金鑰與配額。</p>
       <button id="searchableStart" type="submit" class="btn btn-primary">開始處理</button>
       <button id="searchableCancel" type="button" class="btn" hidden>停止</button>
     </form>
     <p id="searchableStatus" role="status"></p>
+    <details id="searchablePreview" hidden>
+      <summary id="searchablePreviewTitle">預覽浮水印過濾</summary>
+      <img id="searchablePreviewImage" class="searchable-preview-image" alt="過濾前的原始頁面">
+      <p><strong>排除的字樣</strong> <span id="searchablePreviewRemoved"></span></p>
+      <p><strong>保留的文字（節錄）</strong></p>
+      <p id="searchablePreviewText"></p>
+    </details>
     <a id="searchableDownload" class="btn" hidden>下載可搜尋 PDF</a>
   </section>
 </template>

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>可搜尋 PDF 浮水印測試</title>
+<script type="importmap">
+{"imports":{"pdf-lib":"https://esm.sh/pdf-lib@1.17.1","@pdf-lib/fontkit":"https://esm.sh/@pdf-lib/fontkit@1.1.1","pdfjs-dist/":"https://esm.sh/pdfjs-dist@4.6.82/"}}
+</script>
+<pre id="log">執行中…</pre>
+<script type="module">
+import { degrees, PDFDocument, PDFName, PDFOperator, PDFString, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
+import { loadFont, subsetFont } from '../src/pdf/fonts.js';
+import { openPdf } from '../src/input/pdfin.js';
+import { makeSearchablePdf } from '../src/pdf/searchable.js';
+import { excludeWatermarks, watermarkPatterns } from '../src/pdf/watermark.js';
+import { settings } from '../src/state/settings.js';
+
+const log = document.querySelector('#log');
+log.textContent = '';
+function check(condition, description) {
+  if (!condition) throw new Error(description);
+  log.textContent += `✓ ${description}\n`;
+}
+
+async function inspect(file, number = 1) {
+  const pdf = await openPdf(file);
+  try {
+    const page = await pdf.getPage(number);
+    const viewport = page.getViewport({ scale: 1 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const text = (await page.getTextContent()).items.map(item => item.str).join(' ');
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    return { text, pixels, width: canvas.width, height: canvas.height };
+  } finally {
+    await pdf.destroy();
+  }
+}
+
+function words(text, x, y, step = 11) {
+  const vertices = (left, right) => [{ x: left, y }, { x: right, y },
+    { x: right, y: y + 24 }, { x: left, y: y + 24 }];
+  const symbols = Array.from(text, (ch, i) => ({
+    text: ch, boundingBox: { vertices: vertices(x + i * step, x + (i + 1) * step) },
+  }));
+  return { symbols, boundingBox: { vertices: vertices(x, x + symbols.length * step) } };
+}
+
+const originalFetch = window.fetch;
+const originalKey = settings.googleKey;
+const matchingOptions = { language: 'en', watermarkText: 'DRAFT COPY\nBook Seal' };
+let ocrCalls = 0;
+let ocrPixel;
+try {
+  const input = ['前文ＡＩ', '章  後文', 'copyright Copy ＣＯＰＹ'];
+  const match = excludeWatermarks(input, watermarkPatterns('AI章\ncopy'));
+  check(match.matches.length === 3 && match.runs.map((runs, i) =>
+    runs.map(({ start, end }) => input[i].slice(start, end)).join('')).join('|')
+      === '前文|  後文|copyright  ', '可跨文字框匹配全半形與空白，保留英文詞前後綴');
+
+  settings.googleKey = 'fixture-key';
+  window.fetch = async (url, init) => {
+    if (!String(url).startsWith('https://vision.googleapis.com/')) return originalFetch(url, init);
+    ocrCalls++;
+    const { requests } = JSON.parse(init.body);
+    const image = new Image();
+    image.src = 'data:image/jpeg;base64,' + requests[0].image.content;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    ocrPixel = ctx.getImageData(600, 270, 1, 1).data[0];
+    return Response.json({ responses: [{ fullTextAnnotation: { pages: [{ blocks: [{ paragraphs: [{
+      words: [words('KEEP DRAFT COPY TAIL', 35, 95), words('BOOK', 280, 280), words('SEAL', 280, 323),
+        words('PAGE7', 50, 650)],
+    }] }] }] } }] });
+  };
+
+  const source = await PDFDocument.create();
+  source.registerFontkit(fontkit);
+  const fixtureFont = await subsetFont(await loadFont('sans'),
+    new Set('The actual bridge report contains enough existing words.BEFORE DRAFT COPY AFTER'));
+  const font = await source.embedFont(fixtureFont, { subset: false });
+  const native = source.addPage([340, 300]);
+  native.setCropBox(20, 20, 300, 240);
+  native.setRotation(degrees(90));
+  native.drawText('The actual bridge report contains enough existing words.', { x: 34, y: 205, font, size: 11 });
+  native.drawText('BEFORE DRAFT COPY AFTER', { x: 60, y: 126, font, size: 14 });
+
+  const scan = source.addPage([300, 240]);
+  const group = source.context.register(source.context.obj({ Type: 'OCG', Name: 'Watermark' }));
+  // PDF 的 /Name 是字串，/Properties 的鍵才是 PDF 名稱。
+  source.context.lookup(group).set(PDFName.of('Name'), PDFString.of('Watermark'));
+  source.catalog.set(PDFName.of('OCProperties'), source.context.obj({ OCGs: [group], D: { Order: [group] } }));
+  scan.node.Resources().set(PDFName.of('Properties'), source.context.obj({ Mark: group }));
+  scan.pushOperators(PDFOperator.of('BDC', [PDFName.of('OC'), PDFName.of('Mark')]));
+  scan.drawRectangle({ x: 190, y: 140, width: 20, height: 20, color: rgb(0, 0, 0) });
+  scan.pushOperators(PDFOperator.of('EMC'));
+
+  const file = new File([await source.save()], 'fixture.pdf', { type: 'application/pdf' });
+  const before = await inspect(file);
+  const scanBefore = await inspect(file, 2);
+  const output = await makeSearchablePdf(file, { ...matchingOptions, hideWatermarkLayers: true });
+  const after = await inspect(output.blob);
+  const scanAfter = await inspect(output.blob, 2);
+
+  check(ocrCalls === 1 && scanBefore.pixels[(90 * 300 + 200) * 4] < 10 && ocrPixel > 240,
+    '既有正文免 OCR，且只在 OCR 暫存影像隱藏浮水印圖層');
+  check(output.rebuiltPages === 1 && output.hiddenLayers === 1 && output.filteredMatches === 3,
+    '統計既有文字命中、OCR 命中和辨識用圖層');
+  check(!/draft|copy/i.test(after.text) && /BEFORE\s+AFTER/.test(after.text) && after.text.includes('bridge report'),
+    '既有文字層排除浮水印並保留同一行正文');
+  check(!/draft|copy|book|seal/i.test(scanAfter.text) && /KEEP\s+TAIL/.test(scanAfter.text) &&
+    scanAfter.text.includes('PAGE7'), 'OCR 排除行內及跨行浮水印，保留同一行正文與頁碼');
+  check(scanAfter.pixels.every((value, index) => value === scanBefore.pixels[index]),
+    '掃描頁畫面逐像素一致，包括原浮水印圖層');
+  const diff = before.pixels.reduce((total, value, index) => total + Math.abs(value - after.pixels[index]), 0);
+  check(after.width === before.width && after.height === before.height && diff / before.pixels.length < 3,
+    '含既有文字的旋轉裁切頁保有尺寸與近似相同的原畫面');
+  check(output.preview?.page === 1 && output.preview.removed.includes('DRAFT COPY') &&
+    !output.preview.text.includes('DRAFT COPY'), '首個命中頁可預覽原圖和過濾結果');
+
+  const plain = await makeSearchablePdf(file, { language: 'en' });
+  check(plain.existingPages === 1 && plain.rebuiltPages === 0 && plain.filteredMatches === 0 &&
+    (await inspect(plain.blob)).text.includes('DRAFT COPY'),
+    '留空時沿用既有文字層');
+  const watermarkOnly = await PDFDocument.create();
+  watermarkOnly.registerFontkit(fontkit);
+  const wmFont = await watermarkOnly.embedFont(fixtureFont, { subset: false });
+  const wmPage = watermarkOnly.addPage([300, 240]);
+  wmPage.drawText('DRAFT COPY DRAFT COPY DRAFT COPY DRAFT COPY DRAFT COPY', { x: 20, y: 160, size: 7, font: wmFont });
+  const wmFile = new File([await watermarkOnly.save()], 'watermark-only.pdf');
+  const callsBefore = ocrCalls;
+  const wmResult = await makeSearchablePdf(wmFile, matchingOptions);
+  check(ocrCalls === callsBefore + 1 && wmResult.rebuiltPages === 1 &&
+    /KEEP\s+TAIL/.test((await inspect(wmResult.blob)).text),
+    '原生文字只有大量浮水印時，仍會辨識原頁正文');
+  document.title = 'PASS';
+} catch (error) {
+  log.textContent += `✗ ${error.stack ?? error.message}\n`;
+  document.title = 'FAIL';
+} finally {
+  window.fetch = originalFetch;
+  settings.googleKey = originalKey;
+}
+</script>

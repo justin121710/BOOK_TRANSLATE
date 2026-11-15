@@ -1,19 +1,24 @@
-/* 保留原始 PDF 的頁面內容，透過 PDF 的不可見文字模式加上 OCR。 */
+/* 保留頁面外觀，以 PDF 的不可見文字模式加入可擷取文字。 */
 import {
-  PDFDocument, TextRenderingMode, beginText, endText, popGraphicsState,
+  PDFDocument, PDFName, TextRenderingMode, beginText, endText, popGraphicsState,
   pushGraphicsState, setFontAndSize, setTextMatrix, setTextRenderingMode, showText,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { AnnotationMode } from 'pdfjs-dist/build/pdf.min.mjs';
 import { annotate } from '../api/vision.js';
 import {
   extractItems, NATIVE_TEXT_MIN_CHARS_PER_PAGE, openPdf, RENDER_MAX_EDGE,
 } from '../input/pdfin.js';
 import { blobToBase64, toBlob } from '../preprocess/enhance.js';
 import { findMissingGlyphs, loadFont, subsetFont } from './fonts.js';
+import { excludeWatermarks, isWatermarkLayer, sliceWord, watermarkPatterns } from './watermark.js';
 
 const FONT_BY_LANGUAGE = { 'zh-Hant': 'sans', 'zh-Hans': 'ocrSC', ja: 'ocrJP', en: 'sans' };
 
-export async function makeSearchablePdf(file, { language, signal, onProgress } = {}) {
+export async function makeSearchablePdf(file, {
+  language, watermarkText = '', hideWatermarkLayers = false, signal, onProgress,
+} = {}) {
+  const patterns = watermarkPatterns(watermarkText);
   const fontId = FONT_BY_LANGUAGE[language] || 'sans';
   const reader = await openPdf(file);
   try {
@@ -22,32 +27,69 @@ export async function makeSearchablePdf(file, { language, signal, onProgress } =
     const pages = pdf.getPages();
     if (pages.length !== reader.numPages) throw new Error('無法比對原始 PDF 頁數');
 
+    const layerConfig = hideWatermarkLayers ? await reader.getOptionalContentConfig() : null;
+    let hiddenLayers = 0;
+    for (const [id, group] of Object.entries(layerConfig?.getGroups() ?? {})) {
+      if (group.visible && isWatermarkLayer(group.name)) {
+        layerConfig.setVisibility(id, false);
+        hiddenLayers++;
+      }
+    }
+
     const overlays = [];
     const emptyPages = [];
     const chars = new Set();
     let existingPages = 0;
+    let rebuiltPages = 0;
+    let filteredMatches = 0;
+    let preview;
     for (let n = 1; n <= reader.numPages; n++) {
       signal?.throwIfAborted();
       onProgress?.(n, reader.numPages);
       const page = await reader.getPage(n);
       try {
         const text = await page.getTextContent();
-        const count = text.items.reduce((sum, item) =>
-          sum + (item.str?.match(/[\p{L}\p{N}]/gu)?.length ?? 0), 0);
-        if (count >= NATIVE_TEXT_MIN_CHARS_PER_PAGE) {
+        const nativeItems = text.items.filter(item => item.str);
+        const native = excludeWatermarks(nativeItems.map(item => item.str), patterns);
+        const rebuild = native.matches.length > 0;
+        const count = nativeItems.reduce((sum, item, i) => sum + native.runs[i].reduce(
+          (total, { start, end }) => total +
+            (item.str.slice(start, end).match(/[\p{L}\p{N}]/gu)?.length ?? 0), 0), 0);
+        if (!rebuild && count >= NATIVE_TEXT_MIN_CHARS_PER_PAGE) {
           existingPages++;
           continue;
         }
 
-        const base = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({
-          scale: Math.min(3, RENDER_MAX_EDGE / Math.max(base.width, base.height)),
-        });
-        const nativeBoxes = extractItems(text, viewport)
-          .filter(item => /[\p{L}\p{N}]/u.test(item.str)).map(item => item.bbox);
-        const words = await recognise(page, viewport, nativeBoxes, language, signal);
+        const viewport = pageViewport(page);
+        const nativeWords = rebuild ? nativeItems.flatMap((item, i) => {
+          const word = locateNative(item);
+          return word ? native.runs[i].map(run => sliceWord(word, run)).filter(Boolean) : [];
+        }) : [];
+        const nativeBoxes = rebuild
+          ? nativeWords.map(word => wordBox(word, viewport))
+          : extractItems(text, viewport).filter(item => /[\p{L}\p{N}]/u.test(item.str)).map(item => item.bbox);
+        const ocr = count < NATIVE_TEXT_MIN_CHARS_PER_PAGE
+          ? await recognise(page, viewport, nativeBoxes, language, patterns,
+            hiddenLayers ? layerConfig : null, signal)
+          : { words: [], matches: [] };
+        const words = [...nativeWords, ...ocr.words];
+        const matches = [...native.matches, ...ocr.matches];
+        filteredMatches += matches.length;
+        if (matches.length && !preview) {
+          const image = await renderPage(page, pageViewport(page, 720, 1),
+            { type: 'image/jpeg', signal });
+          preview = {
+            image, page: n, removed: [...new Set(matches)].slice(0, 10),
+            text: words.map(word => word.text).join(' ').slice(0, 2400),
+          };
+        }
+
+        if (rebuild) {
+          await rebuildPage(pdf, pages[n - 1], page, signal);
+          rebuiltPages++;
+        }
         if (!words.length) {
-          if (count) existingPages++;
+          if (count && !rebuild) existingPages++;
           else emptyPages.push(n);
           continue;
         }
@@ -62,42 +104,85 @@ export async function makeSearchablePdf(file, { language, signal, onProgress } =
     }
 
     signal?.throwIfAborted();
-    if (!overlays.length) return { blob: file, existingPages, emptyPages, addedPages: 0, missing: [] };
+    const summary = { existingPages, emptyPages, rebuiltPages, filteredMatches, hiddenLayers, preview };
+    if (!overlays.length && !rebuiltPages) return { ...summary, blob: file, addedPages: 0, missing: [] };
 
     onProgress?.();
-    const missing = await findMissingGlyphs(fontId, [...chars].join(''));
-    const unsupported = new Set(missing);
-    pdf.registerFontkit(fontkit);
-    const fontBytes = await subsetFont(await loadFont(fontId), chars);
-    const font = await pdf.embedFont(fontBytes, { subset: false });
+    const missing = [];
     let addedPages = 0;
-    for (const { page, number, words } of overlays) {
-      signal?.throwIfAborted();
-      if (writeWords(page, words, font, unsupported)) addedPages++;
-      else emptyPages.push(number);
+    if (overlays.length) {
+      missing.push(...await findMissingGlyphs(fontId, [...chars].join('')));
+      const unsupported = new Set(missing);
+      pdf.registerFontkit(fontkit);
+      const fontBytes = await subsetFont(await loadFont(fontId), chars);
+      const font = await pdf.embedFont(fontBytes, { subset: false });
+      for (const { page, number, words } of overlays) {
+        signal?.throwIfAborted();
+        if (writeWords(page, words, font, unsupported)) addedPages++;
+        else emptyPages.push(number);
+      }
     }
 
     const bytes = await pdf.save({ updateFieldAppearances: false });
     signal?.throwIfAborted();
     const blob = new Blob([bytes], { type: 'application/pdf' });
-    return { blob, addedPages, existingPages, emptyPages: emptyPages.sort((a, b) => a - b), missing };
+    return { ...summary, blob, addedPages, emptyPages: emptyPages.sort((a, b) => a - b), missing };
   } finally {
     await reader.destroy();
   }
 }
 
-async function recognise(page, viewport, nativeBoxes, language, signal) {
+function pageViewport(page, maxEdge = RENDER_MAX_EDGE, maxScale = 3, rotation = page.rotate) {
+  const base = page.getViewport({ scale: 1, rotation });
+  return page.getViewport({
+    scale: Math.min(maxScale, maxEdge / Math.max(base.width, base.height)), rotation,
+  });
+}
+
+async function renderPage(page, viewport, { type, layerConfig, annotationMode, signal }) {
+  signal?.throwIfAborted();
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
-  let content;
+  const render = page.render({
+    canvasContext: canvas.getContext('2d'),
+    viewport,
+    annotationMode,
+    ...(layerConfig ? { optionalContentConfigPromise: Promise.resolve(layerConfig) } : {}),
+    ...(type === 'image/png' ? { background: 'rgba(0,0,0,0)' } : {}),
+  });
+  const cancel = () => render.cancel();
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    await render.promise;
     signal?.throwIfAborted();
-    content = await blobToBase64(await toBlob(canvas, 'image/jpeg', 0.92));
+    return await toBlob(canvas, type, 0.92);
   } finally {
+    signal?.removeEventListener('abort', cancel);
     canvas.width = canvas.height = 0;
   }
+}
+
+async function rebuildPage(pdf, target, original, signal) {
+  // 保留頁面、注釋與旋轉設定，用原外觀取代含有浮水印文字的內容串流。
+  const viewport = pageViewport(original, RENDER_MAX_EDGE, 3, 0);
+  const image = await renderPage(original, viewport, { type: 'image/png', annotationMode: AnnotationMode.DISABLE, signal });
+  signal?.throwIfAborted();
+  const png = await pdf.embedPng(await image.arrayBuffer());
+  const [x, y, right, top] = original.view;
+  target.node.set(PDFName.of('Contents'), pdf.context.obj([]));
+  // PDFPage 可能已快取自己的新內容串流；這裡每頁只重建一次，且在寫文字前執行。
+  const height = (top - y) * Math.ceil(viewport.height) / viewport.height;
+  target.drawImage(png, {
+    x, y: top - height, height,
+    width: (right - x) * Math.ceil(viewport.width) / viewport.width,
+  });
+}
+
+async function recognise(page, viewport, nativeBoxes, language, patterns, layerConfig, signal) {
+  const image = await renderPage(page, viewport, { type: 'image/jpeg', layerConfig, signal });
+  signal?.throwIfAborted();
+  const content = await blobToBase64(image);
   signal?.throwIfAborted();
   const [result] = await annotate([{
     image: { content },
@@ -106,34 +191,89 @@ async function recognise(page, viewport, nativeBoxes, language, signal) {
   }], { signal });
 
   const words = [];
+  const matches = [];
   for (const ocrPage of result?.fullTextAnnotation?.pages ?? []) {
     for (const block of ocrPage.blocks ?? []) {
       for (const paragraph of block.paragraphs ?? []) {
-        for (const word of paragraph.words ?? []) {
-          const positioned = locateWord(word, viewport, nativeBoxes);
-          if (positioned) words.push(positioned);
+        const entries = paragraph.words ?? [];
+        const texts = entries.map(word => word.symbols?.map(symbol => symbol.text ?? '').join('') ?? '');
+        const filtered = excludeWatermarks(texts, patterns);
+        for (const match of filtered.matches) matches.push(match);
+        for (const [i, word] of entries.entries()) {
+          const positioned = locateWord(word, texts[i], viewport);
+          if (!positioned) continue;
+          const positions = filtered.matches.length ? symbolPositions(word.symbols, positioned, viewport) : null;
+          for (const run of filtered.runs[i]) {
+            const piece = sliceWord(positioned, run, positions);
+            if (piece && !overlapsNative(piece, viewport, nativeBoxes)) words.push(piece);
+          }
         }
       }
     }
   }
-  return words;
+  return { words, matches };
 }
 
-function locateWord(word, viewport, nativeBoxes) {
+function locateNative(item) {
+  const [a, b, c, d, x, y] = item.transform;
+  const vertical = item.dir === 'ttb';
+  const advance = vertical ? [-c, -d] : [a, b];
+  const up = vertical ? [a, b] : [c, d];
+  const length = Math.hypot(...advance);
+  const width = vertical ? item.height : item.width;
+  if (!length || !width || !Math.hypot(...up)) return null;
+  return {
+    text: item.str, trailingSpace: item.hasEOL,
+    right: advance.map(value => value * width / length),
+    up, origin: [x - 0.15 * up[0], y - 0.15 * up[1]],
+  };
+}
+
+function wordBox({ origin, right, up }, viewport) {
+  const corners = [origin, [origin[0] + right[0], origin[1] + right[1]],
+    [origin[0] + up[0], origin[1] + up[1]],
+    [origin[0] + right[0] + up[0], origin[1] + right[1] + up[1]]]
+    .map(([x, y]) => viewport.convertToViewportPoint(x, y));
+  const xs = corners.map(([x]) => x);
+  const ys = corners.map(([, y]) => y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return [x, y, Math.max(...xs) - x, Math.max(...ys) - y];
+}
+
+function symbolPositions(symbols, { text, origin, right }, viewport) {
+  const positions = new Map([[0, 0], [text.length, 1]]);
+  const size = right[0] ** 2 + right[1] ** 2;
+  let offset = 0;
+  for (const symbol of symbols) {
+    const vertex = symbol.boundingBox?.vertices?.[3];
+    if (offset > 0 && offset < text.length && vertex) {
+      const [x, y] = viewport.convertToPdfPoint(vertex.x ?? 0, vertex.y ?? 0);
+      const position = ((x - origin[0]) * right[0] + (y - origin[1]) * right[1]) / size;
+      positions.set(offset, Math.max(0, Math.min(position, 1)));
+    }
+    offset += symbol.text?.length ?? 0;
+  }
+  return positions;
+}
+
+function overlapsNative({ origin, right, up }, viewport, boxes) {
+  const [cx, cy] = viewport.convertToViewportPoint(
+    origin[0] + (right[0] + up[0]) / 2,
+    origin[1] + (right[1] + up[1]) / 2,
+  );
+  return boxes.some(([x, y, w, h]) => cx >= x && cx <= x + w && cy >= y && cy <= y + h);
+}
+
+function locateWord(word, text, viewport) {
   const symbols = word.symbols ?? [];
-  const text = symbols.map(symbol => symbol.text ?? '').join('').trim();
   const breakType = symbols.at(-1)?.property?.detectedBreak?.type;
   const trailingSpace = breakType === 'SPACE' || breakType === 'SURE_SPACE';
   const vertices = word.boundingBox?.vertices;
-  if (!text || vertices?.length !== 4) return null;
+  if (!text.trim() || vertices?.length !== 4) return null;
 
   // Vision 的四角依文字自然方向排序；座標在邊界為零時可能省略。
   const corners = vertices.map(({ x = 0, y = 0 }) => [x, y]);
-  const centerX = corners.reduce((sum, [x]) => sum + x, 0) / 4;
-  const centerY = corners.reduce((sum, [, y]) => sum + y, 0) / 4;
-  if (nativeBoxes.some(([x, y, w, h]) =>
-    centerX >= x && centerX <= x + w && centerY >= y && centerY <= y + h)) return null;
-
   const [tl, tr, br, bl] = corners.map(([x, y]) => viewport.convertToPdfPoint(x, y));
   const right = [(tr[0] + br[0] - tl[0] - bl[0]) / 2,
                  (tr[1] + br[1] - tl[1] - bl[1]) / 2];
