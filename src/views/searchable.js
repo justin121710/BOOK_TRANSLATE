@@ -61,8 +61,13 @@ export default function searchableView(root) {
         hideWatermarkLayers: hideLayers.checked,
         allowImageCopy: imageCopy.checked,
         signal,
-        onProgress: (page, total) => {
-          status.textContent = page ? `正在檢查或辨識第 ${page}／${total} 頁…` : '正在加入文字層…';
+        onProgress: (page, total, batch) => {
+          if (batch) {
+            const range = page === batch.last ? page : `${page}–${batch.last}`;
+            status.textContent = `正在辨識第 ${range} 頁（這批 ${batch.count} 張，共 ${total} 頁）…`;
+          } else {
+            status.textContent = page ? `正在準備第 ${page}／${total} 頁…` : '正在加入文字層…';
+          }
         },
       });
       signal.throwIfAborted();

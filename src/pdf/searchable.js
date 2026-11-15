@@ -13,6 +13,10 @@ import { blobToBase64, toBlob } from '../preprocess/enhance.js';
 import { findMissingGlyphs, loadFont, subsetFont } from './fonts.js';
 import { excludeWatermarks, isWatermarkLayer, sliceWord, watermarkPatterns } from './watermark.js';
 
+// Vision images:annotate 接受最多 16 張圖及 10 MB JSON。留出大小餘裕。
+const OCR_BATCH_PAGES = 16;
+const OCR_BATCH_BYTES = 9_000_000;
+
 const FONT_BY_LANGUAGE = { 'zh-Hant': 'sans', 'zh-Hans': 'ocrSC', ja: 'ocrJP', en: 'sans' };
 
 export async function makeSearchablePdf(file, {
@@ -56,10 +60,30 @@ export async function makeSearchablePdf(file, {
     let rebuiltPages = 0;
     let filteredMatches = 0;
     let preview;
+    const requestOptions = {
+      features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
+      ...(language ? { imageContext: { languageHints: [language] } } : {}),
+    };
+    // Base64 的字元在 JSON 中不需跳脫，每字元一個位元組。
+    const requestOverhead = new TextEncoder().encode(JSON.stringify({
+      image: { content: '' }, ...requestOptions,
+    })).length + 1;
+    let batch = [];
+    let batchBytes = 0;
+
+    async function flushBatch() {
+      await recogniseBatch(batch.filter(item => item.request), reader.numPages, onProgress, signal);
+      for (const item of batch) await finishPage(item);
+      batch = [];
+      batchBytes = 0;
+    }
+
     for (let n = 1; n <= reader.numPages; n++) {
       signal?.throwIfAborted();
       onProgress?.(n, reader.numPages);
       const page = await reader.getPage(n);
+      let item;
+      let bytes = 0;
       try {
         const text = await page.getTextContent();
         const nativeItems = text.items.filter(item => item.str);
@@ -70,6 +94,7 @@ export async function makeSearchablePdf(file, {
             (item.str.slice(start, end).match(/[\p{L}\p{N}]/gu)?.length ?? 0), 0), 0);
         if (!rebuild && count >= NATIVE_TEXT_MIN_CHARS_PER_PAGE) {
           existingPages++;
+          page.cleanup();
           continue;
         }
 
@@ -81,10 +106,37 @@ export async function makeSearchablePdf(file, {
         const nativeBoxes = rebuild
           ? nativeWords.map(word => wordBox(word, viewport))
           : extractItems(text, viewport).filter(item => /[\p{L}\p{N}]/u.test(item.str)).map(item => item.bbox);
-        const ocr = count < NATIVE_TEXT_MIN_CHARS_PER_PAGE
-          ? await recognise(page, viewport, nativeBoxes, language, patterns,
-            hiddenLayers ? layerConfig : null, signal)
-          : { words: [], matches: [] };
+        let request;
+        let copyImage;
+        if (count < NATIVE_TEXT_MIN_CHARS_PER_PAGE) {
+          const image = await renderPage(page, viewport, {
+            type: 'image/jpeg', layerConfig: hiddenLayers ? layerConfig : null, signal,
+          });
+          signal?.throwIfAborted();
+          const content = await blobToBase64(image);
+          signal?.throwIfAborted();
+          request = { image: { content }, ...requestOptions };
+          bytes = content.length + requestOverhead;
+          if (bytes > OCR_BATCH_BYTES) throw new Error('OCR 影像太大，無法送出');
+          if (imageCopy && !page.rotate && !hiddenLayers) copyImage = image;
+        }
+        item = { n, page, viewport, nativeBoxes, nativeWords, native, count, rebuild, request, copyImage };
+      } catch (error) {
+        signal?.throwIfAborted();
+        page.cleanup();
+        throw new Error(`第 ${n} 頁：${error.message}`, { cause: error });
+      }
+      if (batchBytes + bytes > OCR_BATCH_BYTES) await flushBatch();
+      batch.push(item);
+      batchBytes += bytes;
+      if (batch.length === OCR_BATCH_PAGES) await flushBatch();
+    }
+    await flushBatch();
+
+    async function finishPage({ n, page, viewport, nativeBoxes, nativeWords, native, count, rebuild, response, copyImage }) {
+      try {
+        signal?.throwIfAborted();
+        const ocr = readRecognition(response, viewport, nativeBoxes, patterns);
         const words = [...nativeWords, ...ocr.words];
         const matches = [...native.matches, ...ocr.matches];
         filteredMatches += matches.length;
@@ -99,7 +151,7 @@ export async function makeSearchablePdf(file, {
 
         let target = pages[n - 1];
         if (imageCopy) {
-          target = await copyPageAsImage(pdf, page, signal);
+          target = await copyPageAsImage(pdf, page, signal, copyImage);
         } else if (rebuild) {
           await rebuildPage(pdf, target, page, signal);
         }
@@ -109,7 +161,7 @@ export async function makeSearchablePdf(file, {
         if (!words.length) {
           if (count && !rebuild) existingPages++;
           else emptyPages.push(n);
-          continue;
+          return;
         }
         overlays.push({ page: target, number: n, words });
         for (const { text: word } of words) for (const ch of word) chars.add(ch);
@@ -192,10 +244,10 @@ async function rebuildPage(pdf, target, original, signal) {
   drawPageImage(target, png, original, viewport);
 }
 
-async function copyPageAsImage(pdf, original, signal) {
+async function copyPageAsImage(pdf, original, signal, copyImage) {
   const viewport = pageViewport(original, RENDER_MAX_EDGE, 3, 0);
   // 使用原始可見圖層及註記；OCR 專用的浮水印隱藏設定不套用到成品。
-  const blob = await renderPage(original, viewport, { type: 'image/jpeg', signal });
+  const blob = copyImage ?? await renderPage(original, viewport, { type: 'image/jpeg', signal });
   signal?.throwIfAborted();
   const image = await pdf.embedJpg(await blob.arrayBuffer());
   const [x, y, right, top] = original.view;
@@ -218,17 +270,32 @@ function drawPageImage(target, image, original, viewport) {
   });
 }
 
-async function recognise(page, viewport, nativeBoxes, language, patterns, layerConfig, signal) {
-  const image = await renderPage(page, viewport, { type: 'image/jpeg', layerConfig, signal });
-  signal?.throwIfAborted();
-  const content = await blobToBase64(image);
-  signal?.throwIfAborted();
-  const [result] = await annotate([{
-    image: { content },
-    features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
-    ...(language ? { imageContext: { languageHints: [language] } } : {}),
-  }], { signal });
+async function recogniseBatch(items, total, onProgress, signal) {
+  if (!items.length) return;
+  const first = items[0].n;
+  const last = items.at(-1).n;
+  onProgress?.(first, total, { last, count: items.length });
+  let responses;
+  try {
+    responses = await annotate(items.map(item => item.request), { signal, allowItemErrors: true });
+  } catch (error) {
+    signal?.throwIfAborted();
+    const range = first === last ? first : `${first}–${last}`;
+    throw new Error(`第 ${range} 頁批次 OCR：${error.message}`, { cause: error });
+  }
+  if (!Array.isArray(responses) || responses.length !== items.length) {
+    throw new Error(`第 ${first}–${last} 頁批次 OCR：回傳結果筆數與送出的頁數不符`);
+  }
+  for (const [i, item] of items.entries()) {
+    const response = responses[i];
+    if (!response || response.error) {
+      throw new Error(`第 ${item.n} 頁 OCR：${response?.error?.message || '未收到有效辨識結果'}`);
+    }
+    item.response = response;
+  }
+}
 
+function readRecognition(result, viewport, nativeBoxes, patterns) {
   const words = [];
   const matches = [];
   for (const ocrPage of result?.fullTextAnnotation?.pages ?? []) {

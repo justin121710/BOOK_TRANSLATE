@@ -18,7 +18,7 @@ export class VisionError extends Error {
   }
 }
 
-export async function annotate(requests, { signal } = {}) {
+export async function annotate(requests, { signal, allowItemErrors = false } = {}) {
   const key = settings.googleKey;
   if (!key) throw new VisionError('尚未設定 Google Cloud Vision 金鑰', 0);
 
@@ -43,9 +43,9 @@ export async function annotate(requests, { signal } = {}) {
   }
 
   // 批次請求裡個別項目也可能失敗，這裡不吞掉
-  const first = body.responses?.[0];
-  if (first?.error) {
-    throw new VisionError(first.error.message || '辨識失敗', 200, first.error);
+  const itemError = allowItemErrors ? null : body.responses?.find(item => item?.error)?.error;
+  if (itemError) {
+    throw new VisionError(itemError.message || '辨識失敗', 200, itemError);
   }
   return body.responses || [];
 }
