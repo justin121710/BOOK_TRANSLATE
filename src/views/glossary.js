@@ -46,7 +46,7 @@ export default async function glossaryView(root, { id }) {
 
   const search = document.createElement('input');
   search.type = 'text';
-  search.placeholder = '搜尋日文或中文…';
+  search.placeholder = '搜尋原文或譯文…';
   search.style.marginTop = '12px';
   search.addEventListener('input', paint);
 
@@ -133,7 +133,7 @@ export default async function glossaryView(root, { id }) {
 
   async function addTerm() {
     const ja = await askText('新增專有名詞', {
-      placeholder: '日文原文', okLabel: '下一步',
+      placeholder: '術語原文', okLabel: '下一步',
       hint: '例如人名、地名、作品名、術語。',
     });
     if (ja === null || !ja.trim()) return;

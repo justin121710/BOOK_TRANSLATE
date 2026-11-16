@@ -4,7 +4,7 @@ import {
   pushGraphicsState, setFontAndSize, setTextMatrix, setTextRenderingMode, showText,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import { AnnotationMode } from 'pdfjs-dist/build/pdf.min.mjs';
+import { AnnotationMode, OPS } from 'pdfjs-dist/build/pdf.min.mjs';
 import { annotate } from '../api/vision.js';
 import {
   extractItems, NATIVE_TEXT_MIN_CHARS_PER_PAGE, openPdf, RENDER_MAX_EDGE,
@@ -20,11 +20,10 @@ const OCR_BATCH_BYTES = 9_000_000;
 const FONT_BY_LANGUAGE = { 'zh-Hant': 'sans', 'zh-Hans': 'ocrSC', ja: 'ocrJP', en: 'sans' };
 
 export async function makeSearchablePdf(file, {
-  language, watermarkText = '', hideWatermarkLayers = false, allowImageCopy = false,
+  language, watermarkText = '', hideWatermarkLayers = false, automaticWatermarks = false, allowImageCopy = false,
   signal, onProgress, checkpoint, from = 1, splitLarge = false,
 } = {}) {
   const patterns = watermarkPatterns(watermarkText);
-  const fontId = FONT_BY_LANGUAGE[language] || 'sans';
   const reader = await openPdf(file);
   let readerClosed = false;
   let inFlight;
@@ -66,12 +65,14 @@ export async function makeSearchablePdf(file, {
 
     const layerConfig = hideWatermarkLayers ? await reader.getOptionalContentConfig() : null;
     let hiddenLayers = 0;
-    for (const [id, group] of Object.entries(layerConfig?.getGroups() ?? {})) {
+    const groups = layerConfig?.getGroups ? Object.entries(layerConfig.getGroups() ?? {}) : (layerConfig ?? []);
+    for (const [id, group] of groups) {
       if (group.visible && isWatermarkLayer(group.name)) {
         layerConfig.setVisibility(id, false);
         hiddenLayers++;
       }
     }
+    const visibleLayers = hiddenLayers && automaticWatermarks ? await reader.getOptionalContentConfig() : null;
 
     const overlays = [];
     const emptyPages = [];
@@ -137,8 +138,9 @@ export async function makeSearchablePdf(file, {
         const text = await page.getTextContent();
         const nativeItems = text.items.filter(item => item.str);
         const native = excludeWatermarks(nativeItems.map(item => item.str), patterns);
-        const rebuild = imageCopy || native.matches.length > 0;
-        const count = nativeItems.reduce((sum, item, i) => sum + native.runs[i].reduce(
+        const maskedText = visibleLayers && await hasMaskedText(page, visibleLayers, layerConfig);
+        const rebuild = imageCopy || native.matches.length > 0 || maskedText;
+        const count = maskedText ? 0 : nativeItems.reduce((sum, item, i) => sum + native.runs[i].reduce(
           (total, { start, end }) => total +
             (item.str.slice(start, end).match(/[\p{L}\p{N}]/gu)?.length ?? 0), 0), 0);
         if (!rebuild && count >= NATIVE_TEXT_MIN_CHARS_PER_PAGE) {
@@ -148,7 +150,7 @@ export async function makeSearchablePdf(file, {
         }
 
         const viewport = pageViewport(page);
-        const nativeWords = rebuild ? nativeItems.flatMap((item, i) => {
+        const nativeWords = rebuild && !maskedText ? nativeItems.flatMap((item, i) => {
           const word = locateNative(item);
           return word ? native.runs[i].map(run => sliceWord(word, run)).filter(Boolean) : [];
         }) : [];
@@ -235,6 +237,7 @@ export async function makeSearchablePdf(file, {
     const missing = [];
     let addedPages = 0;
     if (overlays.length) {
+      const fontId = FONT_BY_LANGUAGE[language] || await detectOcrFont(chars);
       missing.push(...await findMissingGlyphs(fontId, [...chars].join('')));
       const unsupported = new Set(missing);
       pdf.registerFontkit(fontkit);
@@ -259,6 +262,37 @@ export async function makeSearchablePdf(file, {
     signal?.removeEventListener('abort', cancelNetwork);
     if (!readerClosed) await reader.destroy();
   }
+}
+
+async function hasMaskedText(page, original, filtered) {
+  const { fnArray, argsArray } = await page.getOperatorList({ annotationMode: AnnotationMode.DISABLE });
+  const scopes = [];
+  let masked = 0;
+  for (let i = 0; i < fnArray.length; i++) {
+    const op = fnArray[i];
+    if (op === OPS.beginMarkedContent || op === OPS.beginMarkedContentProps) {
+      const args = argsArray[i];
+      const layer = op === OPS.beginMarkedContentProps && args?.[0] === 'OC' ? args[1] : null;
+      const hide = Boolean(layer && original.isVisible(layer) && !filtered.isVisible(layer));
+      scopes.push(hide);
+      if (hide) masked++;
+    } else if (op === OPS.endMarkedContent) {
+      if (scopes.pop()) masked--;
+    } else if (masked && (op === OPS.showText || op === OPS.showSpacedText)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function detectOcrFont(chars) {
+  const text = [...chars].join('');
+  const preferred = /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text) ? 'ocrJP' : 'sans';
+  // 只有遇到主要字型缺少的漢字才讀取另一套，以免拉長一般文件的匯出時間。
+  const missing = await findMissingGlyphs(preferred, text);
+  if (!missing.some(ch => /\p{Script=Han}/u.test(ch))) return preferred;
+  const alternative = preferred === 'sans' ? 'ocrSC' : 'sans';
+  return (await findMissingGlyphs(alternative, text)).length < missing.length ? alternative : preferred;
 }
 
 function pageViewport(page, maxEdge = RENDER_MAX_EDGE, maxScale = 3, rotation = page.rotate) {

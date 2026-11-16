@@ -84,3 +84,9 @@ export function tpl(id) {
   if (!t) throw new Error(`找不到模板 #${id}`);
   return t.content.cloneNode(true);
 }
+
+export function toolTabs(root, active) {
+  const tabs = tpl('tpl-tools');
+  tabs.querySelector(`[data-tool="${active}"]`).setAttribute('aria-current', 'page');
+  root.append(tabs);
+}

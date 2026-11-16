@@ -1,9 +1,11 @@
-import { tpl, setTitle, go } from '../ui/router.js';
+import { tpl, setTitle, go, toolTabs } from '../ui/router.js';
 import { toast, bad, pending } from '../ui/toast.js';
 import { askText, askConfirm } from '../ui/dialog.js';
 import { icon } from '../ui/icons.js';
 import { hasKeys, missingKeys } from '../state/settings.js';
 import * as db from '../state/db.js';
+import { queueProjectPdf } from './project.js';
+import { TARGET_LANGUAGES, targetLanguage } from '../translate/languages.js';
 
 const STATUS_LABEL = {
   pending: '待處理',
@@ -15,9 +17,36 @@ const STATUS_LABEL = {
 
 export default async function homeView(root) {
   setTitle('書籍翻譯器');
+  toolTabs(root, 'translate');
   root.append(tpl('tpl-home'));
 
   const $ = (id) => root.querySelector('#' + id);
+
+  const language = $('translateLanguage');
+  for (const [code, label] of Object.entries(TARGET_LANGUAGES)) {
+    const option = document.createElement('option');
+    option.value = code;
+    option.textContent = label;
+    language.append(option);
+  }
+  const pdfInput = $('translateFile');
+  const openPdf = $('translateOpen');
+  pdfInput.addEventListener('change', () => { openPdf.disabled = !pdfInput.files?.length; });
+  $('translateStart').addEventListener('submit', async event => {
+    event.preventDefault();
+    const file = pdfInput.files?.[0];
+    if (!file || openPdf.disabled) return;
+    openPdf.disabled = true;
+    try {
+      const name = file.name.replace(/\.pdf$/i, '');
+      const project = await db.createProject(name, targetLanguage(language.value));
+      queueProjectPdf(project.id, file);
+      go('project', { id: project.id });
+    } catch (error) {
+      bad(error.message);
+      openPdf.disabled = false;
+    }
+  });
 
   if (!hasKeys()) {
     const warn = $('keyWarn');
@@ -63,7 +92,7 @@ export default async function homeView(root) {
       hint: '之後可以再改名。',
     });
     if (name === null) return;
-    const p = await db.createProject(name.trim());
+    const p = await db.createProject(name.trim(), targetLanguage(language.value));
     go('project', { id: p.id });
   });
 
@@ -71,7 +100,6 @@ export default async function homeView(root) {
 
   async function paint() {
     const projects = await db.listProjects();
-    $('emptyHint').hidden = projects.length > 0;
 
     const list = $('projectList');
     list.replaceChildren();

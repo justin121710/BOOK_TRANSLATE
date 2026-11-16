@@ -5,6 +5,13 @@ import { toast, bad, pending } from '../ui/toast.js';
 import * as db from '../state/db.js';
 import { settings } from '../state/settings.js';
 import { addImagePage, listPages } from '../input/pages.js';
+import { targetLabel } from '../translate/languages.js';
+
+const queuedPdfs = new Map();
+
+export function queueProjectPdf(id, file) {
+  queuedPdfs.set(id, file);
+}
 
 const STATUS = {
   pending:    { label: '待處理', cls: '' },
@@ -93,7 +100,7 @@ export default async function projectView(root, { id }) {
 
   camera.addEventListener('change', () => intakeImages(camera, 'camera'));
   album.addEventListener('change', () => intakeImages(album, 'photo'));
-  pdfIn.addEventListener('change', intakePdf);
+  pdfIn.addEventListener('change', () => intakePdf());
   epubIn.addEventListener('change', intakeEpub);
 
   /* ---------- 頁面格線 ---------- */
@@ -103,9 +110,18 @@ export default async function projectView(root, { id }) {
   const runBar = document.createElement('div');
   runBar.className = 'row-gap';
   const ocrBtn = action('辨識文字', runOcr, 'scan');
-  const trBtn = action('翻譯', runTranslate, 'translate');
+  const trBtn = action('翻譯成' + targetLabel(project.targetLanguage), runTranslate, 'translate');
   const pdfBtn = action('匯出 PDF', runExport, 'download');
-  pdfBtn.classList.add('btn-primary');
+  let nextAction = null;
+  const nextStep = action('處理書籍', () => nextAction?.click());
+  nextStep.classList.add('btn-primary');
+  const tools = document.createElement('details');
+  const toolsTitle = document.createElement('summary');
+  toolsTitle.textContent = '其他操作';
+  const toolsRow = document.createElement('div');
+  toolsRow.className = 'row-gap';
+  toolsRow.append(ocrBtn, trBtn, pdfBtn);
+  tools.append(toolsTitle, toolsRow);
 
   /* 批次處理中途要停得下來。
      底層每一頁之間都會檢查 signal，所以按下去會在當前這一頁做完之後停，
@@ -117,21 +133,21 @@ export default async function projectView(root, { id }) {
   stopBtn.classList.add('btn-danger');
   stopBtn.hidden = true;
 
-  runBar.append(ocrBtn, trBtn, pdfBtn, stopBtn);
+  runBar.append(nextStep, stopBtn, tools);
 
   /** @type {AbortController|null} 目前正在跑的批次 */
   let running = null;
 
   function startRun() {
     running = new AbortController();
-    for (const b of [ocrBtn, trBtn, pdfBtn]) b.hidden = true;
+    nextStep.hidden = tools.hidden = true;
     stopBtn.hidden = false;
     return running.signal;
   }
 
   function endRun() {
     running = null;
-    for (const b of [ocrBtn, trBtn, pdfBtn]) b.hidden = false;
+    nextStep.hidden = tools.hidden = false;
     stopBtn.hidden = true;
   }
 
@@ -183,6 +199,11 @@ export default async function projectView(root, { id }) {
   root.append(sec);
 
   await paint();
+  const queuedPdf = queuedPdfs.get(project.id);
+  if (queuedPdf) {
+    queuedPdfs.delete(project.id);
+    void intakePdf(queuedPdf);
+  }
 
   return {
     // 從單頁回到這裡時，歷史裡的上一步往往又是單頁，走歷史會彈回去
@@ -234,8 +255,8 @@ export default async function projectView(root, { id }) {
     paint();
   }
 
-  async function intakePdf() {
-    const file = pdfIn.files?.[0];
+  async function intakePdf(initialFile) {
+    const file = initialFile ?? pdfIn.files?.[0];
     pdfIn.value = '';
     if (!file) return;
 
@@ -243,6 +264,16 @@ export default async function projectView(root, { id }) {
     try {
       // pdf.js 有一大包，用到才載
       const { importPdf, openPdf, probeNativeText } = await import('../input/pdfin.js');
+
+      if (initialFile) {
+        const result = await importPdf(project.id, file, {
+          onProgress: (n, total) => p.update(`匯入中 ${n}／${total}`),
+        });
+        p.done(`已匯入 ${result.pages.length} 頁`, 'ok');
+        await db.touchProject(project.id);
+        await paint();
+        return;
+      }
 
       const doc = await openPdf(file);
       const probe = await probeNativeText(doc);
@@ -294,7 +325,7 @@ export default async function projectView(root, { id }) {
         detail:
           `${s.chapters} 章、${s.paragraphs} 段、約 ${s.chars.toLocaleString()} 字。\n\n` +
           'EPUB 是可重排的 HTML，檔案裡不存在原始頁面座標，' +
-          '所以無法「照原排版還原」。這條路會用統一的書籍版式重新排成一本乾淨的中譯書，' +
+          '所以無法「照原排版還原」。這條路會用統一的書籍版式重新排成一本乾淨的譯文書，' +
           '分頁不會和原書一致，也沒有插圖。\n\n' +
           '振り仮名（ruby 標記）會直接移除。',
         okLabel: '匯入',
@@ -354,7 +385,7 @@ export default async function projectView(root, { id }) {
       withFigures < todo.length
         ? `\n提醒：有 ${todo.length - withFigures} 頁還沒畫圖片框。` +
           '先畫好的話，翻譯時模型會知道那幾塊空間有限、譯文會更精簡。' +
-          '事後補畫也可以，匯出時一樣會蓋掉原字寫上中譯。'
+          '事後補畫也可以，匯出時一樣會蓋掉原字寫上譯文。'
         : '',
     ].filter(Boolean).join('\n');
 
@@ -428,7 +459,7 @@ export default async function projectView(root, { id }) {
       return;
     }
 
-    const yes = await askConfirm(`翻譯 ${todo.length} 頁？`, {
+    const yes = await askConfirm(`將 ${todo.length} 頁翻譯成${targetLabel(project.targetLanguage)}？`, {
       detail:
         `共 ${est.blockCount} 個文字塊，使用 ${est.model}。\n` +
         `估計花費約 US$${est.cost.toFixed(3)}（輸入約 ${est.input.toLocaleString()} token，` +
@@ -436,8 +467,7 @@ export default async function projectView(root, { id }) {
         '這是估算值，實際以供應商帳單為準。頁面會依序處理，' +
         '好讓專有名詞的譯法能跨頁累積並保持一致。' +
         (todo.some(p => p.source === 'epub')
-          ? '\n\n翻譯完成後會依中譯重新分頁：中文比日文短，' +
-            '沿用原文的版面每頁都會留下大片空白。'
+          ? '\n\n翻譯完成後會依譯文重新分頁。'
           : ''),
       okLabel: '開始翻譯',
     });
@@ -463,9 +493,9 @@ export default async function projectView(root, { id }) {
         p.done(`完成 ${res.done} 頁，失敗 ${res.failed} 頁　US$${res.cost.toFixed(3)}`, 'bad');
         for (const e of res.errors.slice(0, 3)) bad(`第 ${e.page} 頁：${e.message}`);
       } else {
-        // EPUB 要依中譯重排：用日文原文排出來的版面會留下大片空白
+        // EPUB 要依譯文重排：用日文原文排出來的版面會留下大片空白
         if (todo.some(pg => pg.source === 'epub')) {
-          p.update('依中譯重新分頁…');
+          p.update('依譯文重新分頁…');
           const { repaginate } = await import('../input/epubpage.js');
           const r = await repaginate(project.id);
           p.done(r ? `已翻譯並重排為 ${r.pages} 頁　US$${res.cost.toFixed(3)}`
@@ -529,7 +559,7 @@ export default async function projectView(root, { id }) {
     }
   }
 
-  /** @returns {Promise<boolean|null>} true=附原頁對照，false=純中譯，null=取消 */
+  /** @returns {Promise<boolean|null>} true=附原頁對照，false=純譯文，null=取消 */
   function askExportOptions(count) {
     return new Promise(resolve => {
       const body = document.createElement('div');
@@ -538,7 +568,7 @@ export default async function projectView(root, { id }) {
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       const span = document.createElement('span');
-      span.textContent = '附上原頁掃描對照（奇數頁原文、偶數頁中譯）';
+      span.textContent = '附上原頁掃描對照（奇數頁原文、偶數頁譯文）';
       label.append(cb, span);
 
       const hint = document.createElement('p');
@@ -594,12 +624,21 @@ export default async function projectView(root, { id }) {
 
     // 有溢出的頁：匯出時把 overflow 記在區塊上，這裡撈回來當篩選條件
     const overflowPages = new Set();
+    const recognisedPages = new Set();
     if (pages.length) {
       for (const b of await db.getBy('blocks', 'projectId', project.id)) {
         if (b.overflow) overflowPages.add(b.pageId);
+        recognisedPages.add(b.pageId);
       }
     }
 
+    const needsOcr = pages.some(page => page.source !== 'epub' &&
+      (page.status === 'pending' || (page.status === 'failed' && !recognisedPages.has(page.id))));
+    const needsTranslation = pages.some(page => page.status === 'ocr' || page.status === 'failed');
+    nextAction = needsOcr ? ocrBtn : needsTranslation ? trBtn : pdfBtn;
+    nextStep.querySelector('span').textContent = nextAction.textContent;
+    runBar.hidden = pages.length === 0;
+    nextStep.hidden = tools.hidden = Boolean(running);
     const shown = pages.filter(p =>
       filter === 'all' ? true
       : filter === 'overflow' ? overflowPages.has(p.id)

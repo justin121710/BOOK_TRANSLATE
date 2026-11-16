@@ -122,7 +122,7 @@ export function renderPage(size, blocks, opts = {}) {
     }
 
     const laid = fitText(b.dstText, box, {
-      vertical: b.vertical,
+      vertical: opts.targetLanguage !== 'en' && b.vertical,
       size: b.fontSize,
       indent: b.indent,
       mathSpans: b.mathSpans,

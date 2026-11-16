@@ -35,8 +35,7 @@ export async function recognisePage(page, opts = {}) {
     const [res] = await vision.annotate([{
       image: { content },
       features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
-      imageContext: { languageHints: ['ja'] },
-    }]);
+    }], { signal: opts.signal });
 
     parsed = parseVision(res, { dropRuby: settings.dropRuby });
     source = 'vision';

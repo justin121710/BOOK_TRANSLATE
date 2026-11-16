@@ -1,16 +1,14 @@
-import { setTitle, tpl } from '../ui/router.js';
+import { setTitle, tpl, toolTabs } from '../ui/router.js';
 import { changes, deleteOutput, discardJob, job, mergeSavedOutput, restoreJob, runJob } from '../state/searchable-job.js';
 
 export default function searchableView(root) {
-  setTitle('PDF 加上文字層');
+  setTitle('書籍翻譯器');
+  toolTabs(root, 'searchable');
   root.append(tpl('tpl-searchable'));
   const form = root.querySelector('form');
   const field = name => root.querySelector('#searchable' + name);
   const fileInput = field('File');
-  const language = field('Language');
   const watermarks = field('Watermarks');
-  const hideLayers = field('HideLayers');
-  const imageCopy = field('ImageCopy');
   const preview = field('Preview');
   const previewImage = field('PreviewImage');
   const start = field('Start');
@@ -101,7 +99,7 @@ export default function searchableView(root) {
     }
     if (result.filteredMatches) notes.push(`排除浮水印文字 ${result.filteredMatches} 處。`);
     else if (options?.watermarkText?.trim()) notes.push('未比對到輸入的浮水印字樣。');
-    if (options?.hideWatermarkLayers) notes.push(`OCR 暫時隱藏 ${result.hiddenLayers} 個標為浮水印的圖層。`);
+    if (result.hiddenLayers) notes.push(`OCR 暫時隱藏 ${result.hiddenLayers} 個標為浮水印的圖層。`);
     if (result.imageCopy) notes.push(`已將受保護的 PDF 另存為 ${result.rebuiltPages} 頁的未加密影像副本。`);
     else if (result.rebuiltPages) notes.push(`以原頁影像重建 ${result.rebuiltPages} 頁。`);
     if (result.preview) {
@@ -120,7 +118,7 @@ export default function searchableView(root) {
   function render() {
     const busy = Boolean(job.controller);
     const locked = job.loading || busy || Boolean(job.pending);
-    for (const control of [fileInput, language, watermarks, hideLayers, imageCopy, start]) {
+    for (const control of [fileInput, watermarks, start]) {
       control.disabled = locked;
     }
     cancel.hidden = !busy;
@@ -143,10 +141,10 @@ export default function searchableView(root) {
     const file = fileInput.files?.[0];
     if (!file) return;
     runJob(file, {
-      language: language.value,
       watermarkText: watermarks.value,
-      hideWatermarkLayers: hideLayers.checked,
-      allowImageCopy: imageCopy.checked,
+      hideWatermarkLayers: true,
+      automaticWatermarks: true,
+      allowImageCopy: true,
     });
   });
 

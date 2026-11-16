@@ -18,6 +18,7 @@ import { processedBlob } from '../input/pages.js';
 import { blobToBitmap, toBlob } from '../preprocess/enhance.js';
 import { fitText, EM_ASCENT } from '../render/layout.js';
 import { RULE_THICKNESS } from '../render/rules.js';
+import { targetLanguage } from '../translate/languages.js';
 
 /** 頁面長邊對應的 PDF 點數。842pt 是 A4 的長邊，印出來大小剛好。 */
 const TARGET_LONG_EDGE = 842;
@@ -39,8 +40,13 @@ export async function exportPdf(project, pages, opts = {}) {
   const overflowUpdates = [];
   const report = (n, note) => opts.onProgress?.(n, total, note);
 
+  const target = targetLanguage(project.targetLanguage);
+  const regionalFont = { 'zh-Hans': 'ocrSC', ja: 'ocrJP' }[target];
+  const bodyFontId = regionalFont || 'serif';
+  const titleFontId = regionalFont || 'sans';
   report(0, '載入字型…');
-  const [serifRaw, sansRaw] = await Promise.all([loadFont('serif'), loadFont('sans')]);
+  const serifRaw = await loadFont(bodyFontId);
+  const sansRaw = bodyFontId === titleFontId ? serifRaw : await loadFont(titleFontId);
 
   // 先把整份文件會用到的字收齊，兩套字型各只子集化並嵌入一次。
   // 逐頁子集化會讓檔案裡出現幾十份字型，體積直接失控。
@@ -64,7 +70,7 @@ export async function exportPdf(project, pages, opts = {}) {
   }
 
   // 缺字檢查：Noto TC 沒有日文專用漢字，殘留的日文人名會變成空白
-  for (const [chars, id] of [[bodyChars, 'serif'], [titleChars, 'sans']]) {
+  for (const [chars, id] of [[bodyChars, bodyFontId], [titleChars, titleFontId]]) {
     if (!chars.size) continue;
     const missing = await findMissingGlyphs(id, [...chars].join(''));
     if (missing.length) {
@@ -157,7 +163,7 @@ export async function exportPdf(project, pages, opts = {}) {
         });
 
         const laid = fitText(b.dstText, { x: bx, y: by, w: bw, h: bh }, {
-          vertical: b.vertical,
+          vertical: target !== 'en' && b.vertical,
           size: b.fontSize,
           minScale: settings.minFontScale,
         });
@@ -186,7 +192,7 @@ export async function exportPdf(project, pages, opts = {}) {
 
       const [bx, by, bw, bh] = b.bbox;
       const laid = fitText(b.dstText, { x: bx, y: by, w: bw, h: bh }, {
-        vertical: b.vertical,
+        vertical: target !== 'en' && b.vertical,
         size: b.fontSize,
         minScale: settings.minFontScale,
         indent: b.indent,

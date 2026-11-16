@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>書籍翻譯器</title>
-<meta name="description" content="日文書頁掃描、AI 翻譯、依原排版重建 PDF">
+<meta name="description" content="書籍翻譯、PDF 重製與文字辨識">
 <meta name="theme-color" content="#16130f">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -41,26 +41,38 @@
 
 </div>
 
+<template id="tpl-tools">
+  <nav class="tool-tabs" aria-label="PDF 工具">
+    <a class="tool-tab" href="#home" data-tool="translate">翻譯並重製 PDF</a>
+    <a class="tool-tab" href="#searchable" data-tool="searchable">加上文字層</a>
+  </nav>
+</template>
+
 <template id="tpl-home">
-  <section class="view pad">
+  <section class="view pad tool-view">
+    <div class="tool-hero">
+      <h2>翻譯並重製 PDF</h2>
+    </div>
     <div id="keyWarn" class="banner banner-warn" hidden>
-      尚未設定 API 金鑰，無法開始翻譯。
+      尚未設定 API 金鑰。
       <button class="link" data-go="settings">前往設定</button>
     </div>
+    <form id="translateStart" class="tool-form">
+      <div class="tool-picker">
+        <label for="translateFile">選擇 PDF</label>
+        <input id="translateFile" type="file" accept=".pdf,application/pdf">
+      </div>
+      <label class="tool-select" for="translateLanguage">翻譯成
+        <select id="translateLanguage"></select>
+      </label>
+      <button id="translateOpen" class="btn btn-primary tool-primary" type="submit" disabled>匯入並開始</button>
+    </form>
 
-    <div class="row-between">
+    <div class="row-between tool-library">
       <h2>我的書</h2>
-      <button id="newProject" class="btn btn-primary">新增書籍</button>
+      <button id="newProject" class="btn">新增書籍</button>
     </div>
-
-    <p><button type="button" class="btn" data-go="searchable">PDF 加上文字層</button></p>
-
     <ul id="projectList" class="card-list"></ul>
-
-    <p id="emptyHint" class="hint" hidden>
-      還沒有任何書。點「新增書籍」開始，之後可以用相機拍書頁、匯入 PDF，或從相簿選照片。
-    </p>
-
     <p id="storageNote" class="hint storage-note">
       資料存在這支裝置的瀏覽器裡。請用主畫面的圖示開啟，
       以網頁形式長期不用可能會被系統清除。重要的書請定期備份。
@@ -69,33 +81,22 @@
 </template>
 
 <template id="tpl-searchable">
-  <section class="view pad">
-    <p>保留原 PDF 的圖表與版面，讓掃描文字可以搜尋與複製。</p>
-    <form>
-      <div class="field">
+  <section class="view pad tool-view">
+    <div class="tool-hero">
+      <h2>加上文字層</h2>
+    </div>
+    <form class="tool-form">
+      <div class="tool-picker">
         <label for="searchableFile">選擇 PDF</label>
         <input id="searchableFile" type="file" accept=".pdf,application/pdf" required>
       </div>
-      <div class="field">
-        <label for="searchableLanguage">原書語言</label>
-        <select id="searchableLanguage">
-          <option value="zh-Hant">繁體中文</option>
-          <option value="zh-Hans">簡體中文</option>
-          <option value="ja">日文</option>
-          <option value="en">英文</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="searchableWatermarks">排除浮水印文字（選填）</label>
-        <textarea id="searchableWatermarks" rows="3" spellcheck="false" autocomplete="off"
-          aria-describedby="searchableWatermarkHint"></textarea>
-        <p id="searchableWatermarkHint" class="hint">每行填一組完整字樣，會比對整頁。輸出保留浮水印外觀。有符合的既有文字時，該頁會轉為影像並重建可搜尋文字層。</p>
-      </div>
-      <label><input id="searchableHideLayers" type="checkbox"> OCR 時略過標為浮水印的 PDF 圖層</label>
-      <label><input id="searchableImageCopy" type="checkbox" aria-describedby="searchableImageCopyHint"> 受保護的 PDF 另存為影像副本</label>
-      <p id="searchableImageCopyHint" class="hint">僅在 PDF 能開啟但因加密無法直接改寫時使用。每頁轉成影像，再加上搜尋文字。書籤、連結與可填寫表單不會帶入副本。</p>
-      <p class="hint">需要辨識的頁面會送到 Google Cloud Vision，並使用你設定的金鑰與配額。</p>
-      <button id="searchableStart" type="submit" class="btn btn-primary">開始處理</button>
+      <details class="tool-options">
+        <summary>辨識設定</summary>
+        <label for="searchableWatermarks">排除浮水印文字</label>
+        <textarea id="searchableWatermarks" rows="2" spellcheck="false" autocomplete="off"
+          placeholder="每行填一組字樣"></textarea>
+      </details>
+      <button id="searchableStart" type="submit" class="btn btn-primary tool-primary">開始辨識</button>
       <button id="searchableCancel" type="button" class="btn" hidden>停止</button>
     </form>
     <p id="searchablePending"></p>

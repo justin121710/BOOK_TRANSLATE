@@ -34,7 +34,7 @@ function area() {
  * @param {{kind:string, text:string, indent:boolean, srcText?:string, id?:string}[]} items
  * @returns {{blocks: object[]}[]} 每一頁的區塊，座標已算好
  */
-export function paginate(items) {
+export function paginate(items, { vertical = true } = {}) {
   const box = area();
   const pages = [];
 
@@ -58,8 +58,8 @@ export function paginate(items) {
 
     const size = item.kind === 'title' ? TITLE_SIZE : BODY_SIZE;
     const colWidth = size * (1 + COL_GAP);
-    const perCol = Math.max(1, Math.floor(box.h * 0.98 / size));
-    const colsPerPage = Math.max(1, Math.floor(box.w / colWidth));
+    const perCol = Math.max(1, Math.floor((vertical ? box.h : box.w) * 0.98 / size));
+    const colsPerPage = Math.max(1, Math.floor((vertical ? box.w : box.h) / colWidth));
 
     const indent = item.indent ? 2 : 0;
     const firstCol = Math.max(1, perCol - indent);
@@ -93,8 +93,8 @@ export function paginate(items) {
 
     page.blocks.push({
       kind: item.kind,
-      vertical: true,
-      bbox: [x, box.y, take * colWidth, box.h],
+      vertical,
+      bbox: vertical ? [x, box.y, take * colWidth, box.h] : [box.x, box.y + col * colWidth, box.w, take * colWidth],
       fontSize: size,
       indent: Boolean(item.indent),
       // 跨頁的第二段之後對不回原文，寧可留空也不要標錯
@@ -131,7 +131,8 @@ export async function buildPages(projectId, book) {
   }
   if (!items.length) throw new Error('這個 EPUB 沒有抽出任何文字');
 
-  const laid = paginate(items);
+  const vertical = !book.language || /^(?:ja|zh)(?:-|$)/i.test(book.language);
+  const laid = paginate(items, { vertical });
 
   const pages = [];
   const blocks = [];
@@ -151,7 +152,7 @@ export async function buildPages(projectId, book) {
       procW: PAGE.width,
       procH: PAGE.height,
       corners: null,
-      vertical: true,
+      vertical,
       nativeText: null,
       error: null,
       createdAt: Date.now(),
@@ -192,7 +193,9 @@ export async function repaginate(projectId) {
     srcText: b.srcText,
   }));
 
-  const laid = paginate(items);
+  const project = await db.get('projects', projectId);
+  const vertical = project?.targetLanguage !== 'en';
+  const laid = paginate(items, { vertical });
 
   // 舊的頁面與區塊全部換掉
   for (const p of pages) await db.delBy('blocks', 'pageId', p.id);
@@ -207,7 +210,7 @@ export async function repaginate(projectId) {
       origBlob: null, procBlob: null,
       origW: PAGE.width, origH: PAGE.height,
       procW: PAGE.width, procH: PAGE.height,
-      source: 'epub', vertical: true, error: null,
+      source: 'epub', vertical, error: null,
     });
     p.blocks.forEach((b, order) => {
       newBlocks.push({ ...b, id: db.uid('bk_'), pageId, projectId, order });

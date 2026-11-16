@@ -119,6 +119,7 @@ export function runJob(file, options) {
       const from = (last?.range.to ?? 0) + 1;
       const result = await makeSearchablePdf(pending.file, {
         ...pending.options,
+        allowImageCopy: true,
         signal, checkpoint, from, splitLarge: true,
         onProgress: (page, total, batch) => {
           if (batch) {

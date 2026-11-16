@@ -54,54 +54,61 @@ export async function probeNativeText(doc, sample = 5) {
  */
 export async function importPdf(projectId, file, opts = {}) {
   const doc = await openPdf(file);
-  const probe = await probeNativeText(doc);
-  const useNative = opts.useNativeText ?? probe.hasNativeText;
+  try {
+    const probe = await probeNativeText(doc);
+    let usedNativeText = false;
 
-  const from = Math.max(1, opts.from || 1);
-  const to = Math.min(doc.numPages, opts.to || doc.numPages);
-  const total = to - from + 1;
+    const from = Math.max(1, opts.from || 1);
+    const to = Math.min(doc.numPages, opts.to || doc.numPages);
+    const total = to - from + 1;
 
-  let index = await nextIndex(projectId);
-  const created = [];
+    let index = await nextIndex(projectId);
+    const created = [];
 
-  for (let n = from; n <= to; n++) {
-    const page = await doc.getPage(n);
+    for (let n = from; n <= to; n++) {
+      const page = await doc.getPage(n);
 
-    const base = page.getViewport({ scale: 1 });
-    const scale = Math.min(RENDER_MAX_EDGE / Math.max(base.width, base.height), 3);
-    const vp = page.getViewport({ scale });
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(RENDER_MAX_EDGE / Math.max(base.width, base.height), 3);
+      const vp = page.getViewport({ scale });
 
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(vp.width);
-    canvas.height = Math.round(vp.height);
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(vp.width);
+      canvas.height = Math.round(vp.height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
 
-    let nativeText = null;
-    if (useNative) {
-      const tc = await page.getTextContent();
-      nativeText = extractItems(tc, vp);
-      if (!nativeText.length) nativeText = null;
+      let nativeText = null;
+      if (opts.useNativeText !== false) {
+        const items = extractItems(await page.getTextContent(), vp);
+        const count = items.reduce((sum, item) => sum + (item.str.match(/[\p{L}\p{N}]/gu)?.length ?? 0), 0);
+        if (items.length && (opts.useNativeText || count >= NATIVE_TEXT_MIN_CHARS_PER_PAGE)) {
+          nativeText = items;
+          usedNativeText = true;
+        }
+      }
+
+      const blob = await toBlob(canvas, 'image/jpeg', 0.92);
+      canvas.width = canvas.height = 0;
+      created.push(await addImagePage(projectId, blob, {
+        source: 'pdf',
+        index: index++,
+        nativeText,
+      }));
+
+      page.cleanup();
+      opts.onProgress?.(n - from + 1, total);
+
+      // 讓出主執行緒，不然手機上整個介面會凍住
+      await new Promise(r => setTimeout(r, 0));
     }
 
-    const blob = await toBlob(canvas, 'image/jpeg', 0.92);
-    created.push(await addImagePage(projectId, blob, {
-      source: 'pdf',
-      index: index++,
-      nativeText,
-    }));
-
-    page.cleanup();
-    opts.onProgress?.(n - from + 1, total);
-
-    // 讓出主執行緒，不然手機上整個介面會凍住
-    await new Promise(r => setTimeout(r, 0));
+    return { pages: created, usedNativeText, probe };
+  } finally {
+    await doc.destroy();
   }
-
-  doc.destroy();
-  return { pages: created, usedNativeText: useNative, probe };
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   GEMINI_SYSTEM, GEMINI_SCHEMA, flowsInto,
 } from './prompt.js';
 import * as glossary from './glossary.js';
+import { targetLabel } from './languages.js';
 import { markPageNumbers } from '../ocr/pagenum.js';
 
 /**
@@ -18,10 +19,11 @@ import { markPageNumbers } from '../ocr/pagenum.js';
  * @returns {Promise<{result: object, usage: object, cost: number}>}
  *   result 的形狀為 { blocks: [...], glossary: [...] }
  */
-async function askModel(userMessage, { maxTokens = 8000, signal } = {}) {
+async function askModel(userMessage, { maxTokens = 8000, signal, target } = {}) {
+  const purpose = `\n\n本次目標語言：${targetLabel(target)}。translation 和術語譯法一律使用這個目標語言。`;
   if (settings.provider === 'gemini') {
     const r = await gemini.generate({
-      system: GEMINI_SYSTEM,
+      system: GEMINI_SYSTEM + purpose,
       user: userMessage,
       schema: GEMINI_SCHEMA,
       maxOutputTokens: maxTokens,
@@ -44,7 +46,7 @@ async function askModel(userMessage, { maxTokens = 8000, signal } = {}) {
 
   const res = await messages({
     max_tokens: maxTokens,
-    system: SYSTEM,
+    system: SYSTEM + purpose,
     tools: [TOOL],
     tool_choice: { type: 'tool', name: TOOL.name },
     messages: [{ role: 'user', content: userMessage }],
@@ -113,7 +115,8 @@ export async function translatePage(page, opts = {}) {
     carriedIds: carried.map(b => b.id),
   });
 
-  const { result, usage, cost } = await askModel(userMessage, { signal: opts.signal });
+  const project = await db.get('projects', page.projectId);
+  const { result, usage, cost } = await askModel(userMessage, { signal: opts.signal, target: project?.targetLanguage });
 
   const byId = new Map([...blocks, ...carried].map(b => [b.id, b]));
   const writes = [];
@@ -250,7 +253,8 @@ export async function retranslateBlock(block, { instruction = '', signal } = {})
     user += `\n\n## 這一塊的額外指示\n${instruction}`;
   }
 
-  const { result, usage, cost } = await askModel(user, { maxTokens: 4000, signal });
+  const project = await db.get('projects', block.projectId);
+  const { result, usage, cost } = await askModel(user, { maxTokens: 4000, signal, target: project?.targetLanguage });
   const item = result.blocks?.[0];
   if (!item) throw new ClaudeError('模型沒有回傳結果，請重試', 200);
 

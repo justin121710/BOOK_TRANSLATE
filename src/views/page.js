@@ -21,6 +21,7 @@ export default async function pageView(root, { id }) {
     return;
   }
 
+  const project = await db.get('projects', page.projectId);
   const siblings = await listPages(page.projectId);
   const pos = siblings.findIndex(p => p.id === page.id);
   setTitle(`第 ${page.index + 1} / ${siblings.length} 頁`);
@@ -171,7 +172,7 @@ export default async function pageView(root, { id }) {
     tip.className = 'hint page-info';
     tip.textContent =
       '在空白處拖曳可新增框，點框選取後可拖角落調整。' +
-      '插圖（藍）圖內的日文會被中譯蓋掉；方程式（紫）整塊原樣貼回，一個符號都不動。';
+      '插圖（藍）圖內的原文會被譯文蓋掉；方程式（紫）整塊原樣貼回，一個符號都不動。';
     stage.append(tip);
 
     bar.append(
@@ -243,7 +244,7 @@ export default async function pageView(root, { id }) {
       const figs = bmp ? await db.getBy('figures', 'pageId', current.id) : [];
 
       const { canvas, report } = renderPage({ width: W, height: H }, blocks,
-        { scale, showBoxes: true, image: bmp, figures: figs });
+        { scale, showBoxes: true, image: bmp, figures: figs, targetLanguage: project?.targetLanguage });
       bmp?.close?.();
 
       const wrap = document.createElement('div');
@@ -392,7 +393,7 @@ export default async function pageView(root, { id }) {
       dst.textContent = inlineMath(b.dstText, b.mathSpans).replace(/\n/g, '⏎');
       const note = document.createElement('p');
       note.className = 'block-note';
-      note.textContent = '匯出時會蓋掉插圖上的原字，把這段中譯寫上去';
+      note.textContent = '匯出時會蓋掉插圖上的原字，把這段譯文寫上去';
       body.append(dst, note);
     } else if (b.dstText) {
       const dst = document.createElement('p');

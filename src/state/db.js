@@ -130,11 +130,12 @@ export async function listProjects() {
   return rows.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export async function createProject(name) {
+export async function createProject(name, targetLanguage = 'zh-Hant') {
   const now = Date.now();
   const p = {
     id: uid('p_'),
     name: name || '未命名書籍',
+    targetLanguage,
     createdAt: now,
     updatedAt: now,
     // 每本書可覆寫的排版偏好；null 代表沿用全域設定
