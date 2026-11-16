@@ -6,6 +6,7 @@ const NS = 'bt.';
 
 const DEFAULTS = {
   googleKey: '',
+  pdfUploadLimitMB: 30,
   claudeKey: '',
   // 'gemini' 可與 Vision 共用同一把 Google 金鑰；'claude' 需要另一把 Anthropic 金鑰
   provider: 'gemini',

@@ -1,4 +1,5 @@
 import { setTitle, tpl, toolTabs } from '../ui/router.js';
+import { settings } from '../state/settings.js';
 import { changes, deleteOutput, discardJob, job, mergeSavedOutput, restoreJob, runJob } from '../state/searchable-job.js';
 
 export default function searchableView(root) {
@@ -20,6 +21,84 @@ export default function searchableView(root) {
   const download = field('Download');
   const remove = field('DeleteOutput');
   const merge = field('MergeOutput');
+  const sizeInput = field('UploadLimit');
+  const fitOriginal = field('FitOriginal');
+  const fitOutput = field('FitOutput');
+  const fitStatus = field('FitStatus');
+  const fitLinks = field('FitLinks');
+  const fittedUrls = [];
+  let fitting;
+  sizeInput.value = settings.pdfUploadLimitMB;
+
+  function releaseFitted() {
+    for (const url of fittedUrls.splice(0)) URL.revokeObjectURL(url);
+    fitLinks.replaceChildren();
+  }
+
+  async function fit(source) {
+    if (!source || fitting || job.loading || job.controller) return;
+    if (!sizeInput.reportValidity() || !sizeInput.value) {
+      fitStatus.textContent = '請輸入每份檔案的大小上限。';
+      return;
+    }
+    releaseFitted();
+    const controller = new AbortController();
+    fitting = controller;
+    const mb = Number(sizeInput.value);
+    settings.pdfUploadLimitMB = mb;
+    render();
+    try {
+      const { fitPdfToLimit, limitBytes } = await import('../pdf/size-limit.js');
+      const cap = limitBytes(mb);
+      const { name, volumes, whole } = source;
+      const results = whole?.size <= cap ? [{ blob: whole }] : await fitPdfToLimit(volumes, mb, {
+        signal: controller.signal,
+        onProgress: (page, total) => { fitStatus.textContent = `正在調整 PDF（${page}／${total}）…`; },
+      });
+      controller.signal.throwIfAborted();
+      const stem = name.replace(/\.pdf$/i, '').replace(/_\d+-\d+$/, '');
+      for (const { blob, from, to } of results) {
+        const link = document.createElement('a');
+        link.className = 'btn';
+        link.href = URL.createObjectURL(blob);
+        fittedUrls.push(link.href);
+        link.download = `${stem}_上傳用${results.length > 1 ? '_'+from+'-'+to : ''}.pdf`;
+        const range = results.length > 1 ? `第 ${from}–${to} 頁` : '整本 PDF';
+        link.textContent = `下載${range}（${(Math.floor(blob.size / 1000) / 1000).toFixed(3)} MB）`;
+        const row = document.createElement('p');
+        row.append(link);
+        fitLinks.append(row);
+      }
+      fitStatus.textContent = results.length === 1 ? '已準備整本 PDF。' : `已分為 ${results.length} 份，每份皆符合上限。`;
+    } catch (error) {
+      if (!controller.signal.aborted) fitStatus.textContent = error.message;
+    } finally {
+      fitting = null;
+      if (!controller.signal.aborted) render();
+    }
+  }
+
+  fileInput.addEventListener('change', render);
+  sizeInput.addEventListener('input', () => {
+    releaseFitted();
+    fitStatus.textContent = '';
+    if (sizeInput.value && sizeInput.validity.valid) settings.pdfUploadLimitMB = Number(sizeInput.value);
+  });
+  fitOriginal.addEventListener('click', () => {
+    const file = fileInput.files?.[0];
+    if (file) void fit({ name: file.name, whole: file, volumes: [{ blob: file }] });
+  });
+  fitOutput.addEventListener('click', () => {
+    const output = job.output;
+    if (!output || job.pending) return;
+    const parts = output.parts ?? [{ name: output.name, result: output.result }];
+    void fit({
+      name: output.final?.name ?? parts[0].name,
+      whole: output.final?.blob,
+      volumes: parts.map(part => ({ blob: part.result.blob })),
+    });
+  });
+
   let renderedOutput;
   const outputUrls = [];
   let previewUrl;
@@ -117,13 +196,17 @@ export default function searchableView(root) {
 
   function render() {
     const busy = Boolean(job.controller);
-    const locked = job.loading || busy || Boolean(job.pending);
+    const locked = job.loading || busy || Boolean(job.pending) || Boolean(fitting);
+    fitOriginal.disabled = job.loading || busy || Boolean(fitting) || !fileInput.files?.length;
+    fitOutput.hidden = !job.output || Boolean(job.pending);
+    fitOutput.disabled = busy || Boolean(fitting);
+    sizeInput.disabled = Boolean(fitting);
     for (const control of [fileInput, watermarks, start]) {
       control.disabled = locked;
     }
     cancel.hidden = !busy;
     resume.hidden = discard.hidden = busy || !job.pending;
-    remove.disabled = busy;
+    resume.disabled = discard.disabled = remove.disabled = merge.disabled = busy || Boolean(fitting);
     merge.hidden = busy || Boolean(job.pending) || Boolean(job.output?.final) ||
       (job.output?.parts?.length ?? 0) < 2;
     pendingLabel.textContent = job.pending ? job.pending.file.name : '';
@@ -154,6 +237,8 @@ export default function searchableView(root) {
   return {
     teardown() {
       changes.removeEventListener('change', render);
+      fitting?.abort();
+      releaseFitted();
       releaseUrls();
     },
   };

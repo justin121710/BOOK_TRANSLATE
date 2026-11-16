@@ -112,6 +112,18 @@
       <p id="searchablePreviewText"></p>
     </details>
     <div id="searchableDownload" hidden></div>
+    <details class="tool-options" id="searchableUploadOptions">
+      <summary>上傳用 PDF</summary>
+      <label>每份上限（MB）
+        <input id="searchableUploadLimit" type="number" min="0.1" step="0.1" value="30" inputmode="decimal">
+      </label>
+      <div class="row-gap">
+        <button id="searchableFitOriginal" type="button" class="btn" disabled>調整選取的 PDF</button>
+        <button id="searchableFitOutput" type="button" class="btn" hidden>調整完成的 PDF</button>
+      </div>
+      <p id="searchableFitStatus" role="status"></p>
+      <div id="searchableFitLinks"></div>
+    </details>
     <button id="searchableMergeOutput" type="button" class="btn btn-primary" hidden>合併整本</button>
     <button id="searchableDeleteOutput" type="button" class="btn" hidden>移除儲存的成品</button>
   </section>
